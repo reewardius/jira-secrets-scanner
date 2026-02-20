@@ -2,15 +2,24 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Устанавливаем зависимости
+# System dependencies: Tesseract OCR + language packs
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    tesseract-ocr-rus \
+    libgl1 \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Копируем скрипт и файл с паттернами
+# Copy scanner files
 COPY jira_scanner.py .
 COPY regex.txt .
 
-# Директория для отчётов (монтируется снаружи)
+# Output directory (mount from host)
 RUN mkdir /reports
 
 ENTRYPOINT ["python", "jira_scanner.py"]
