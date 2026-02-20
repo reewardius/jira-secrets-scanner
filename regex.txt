@@ -76,3 +76,6 @@ Generic Password Assignment:::(?:password|PASSWORD|Password)\s*[:=]\s*["'](?!<|\
 Generic Secret:::(?:secret|SECRET|Secret)\s*[:=]\s*["'](?!<|\$\{|__|%|\{\{|\[|your_|example_|test_|sample_|dummy_)(?!.*<.*>)(?!.*:.*:)(?!.*__.*__)([^"'<>{}\[\]$%:]{12,})["']:::1
 Generic API Key:::(?:api_key|API_KEY|apikey|APIKEY)\s*[:=]\s*["'](?!<|\$\{|%|\{\{|\[|your_|example_|test_)([a-zA-Z0-9\-_]{32,})["']:::1
 Generic Access Token:::(?:access_token|ACCESS_TOKEN|accessToken)\s*[:=]\s*["'](?!<|\$\{|%|\{\{|\[|your_|example_|test_)([a-zA-Z0-9\-_]{32,})["']:::1
+
+# JWT
+JWT Token:::(?:^|[^a-zA-Z0-9\-_.])(eyJ[a-zA-Z0-9\-_]{10,}\.[a-zA-Z0-9\-_]{10,}\.[a-zA-Z0-9\-_]{10,})(?:[^a-zA-Z0-9\-_.]|$):::1
