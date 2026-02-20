@@ -17,7 +17,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy scanner files
 COPY jira_scanner.py .
-COPY regex.txt .
+COPY regex.txt secret_patterns.txt
 
 # Output directory (mount from host)
 RUN mkdir /reports
