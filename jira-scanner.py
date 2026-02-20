@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-"""
-Скрипт для получения списка доступных Jira проектов (spaces)
-и сканирования тикетов на наличие секретов
-Использует Atlassian API token и email для авторизации
-Выводит результаты в Excel файл с подробной информацией
-"""
 
 import requests
 from requests.auth import HTTPBasicAuth
@@ -14,12 +8,38 @@ import argparse
 import os
 import re
 import shutil
+from io import BytesIO
 from pathlib import Path
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from datetime import datetime
 from typing import List, Dict, Tuple
+import warnings
+
+# OCR support (optional)
+try:
+    from PIL import Image
+    import pytesseract
+    os.environ["TESSDATA_PREFIX"] = "/usr/local/share/tessdata/"
+    warnings.simplefilter('ignore', Image.DecompressionBombWarning)
+    OCR_AVAILABLE = True
+except ImportError:
+    OCR_AVAILABLE = False
+
+# PDF support (optional)
+try:
+    import fitz  # PyMuPDF
+    PDF_AVAILABLE = True
+except ImportError:
+    PDF_AVAILABLE = False
+
+# DOCX support (optional)
+try:
+    import docx as python_docx
+    DOCX_AVAILABLE = True
+except ImportError:
+    DOCX_AVAILABLE = False
 
 # AWS SES для отправки email
 try:
@@ -119,6 +139,87 @@ def scan_text_for_secrets(text: str, patterns: List[Tuple[str, str, int]]) -> Li
             continue
     
     return findings
+
+
+def get_issue_attachments(email, api_token, jira_url, issue_key):
+    """
+    Fetches the list of attachments for a given Jira issue.
+    Returns a list of attachment metadata dicts.
+    """
+    jira_url = normalize_jira_url(jira_url)
+    url = f"{jira_url}/rest/api/2/issue/{issue_key}?fields=attachment"
+    auth = HTTPBasicAuth(email, api_token)
+    headers = {"Accept": "application/json"}
+
+    try:
+        response = requests.get(url, headers=headers, auth=auth, timeout=30)
+        if response.status_code == 200:
+            fields = response.json().get("fields", {})
+            return fields.get("attachment", [])
+    except Exception as e:
+        print(f"⚠️  Failed to fetch attachments for {issue_key}: {e}")
+    return []
+
+
+def extract_text_from_attachment(attachment, email, api_token, max_size_bytes=None):
+    """
+    Downloads an attachment and extracts text from it.
+    Supports: plain text, JSON/YAML/XML, DOCX, PDF, images (via OCR).
+
+    Returns:
+        tuple(text: str, ext: str)
+    """
+    att_title = attachment.get("filename", "unknown")
+    download_url = attachment.get("content", "")
+    file_size = attachment.get("size", 0)
+    ext = os.path.splitext(att_title)[1].lstrip(".").lower()
+
+    if max_size_bytes and file_size > max_size_bytes:
+        return "", ext
+
+    # Only process file types we can handle
+    supported_text_exts = {
+        "txt", "log", "md", "rst", "conf", "cfg", "ini", "properties", "env",
+        "json", "xml", "yaml", "yml", "toml", "csv", "tsv",
+        "py", "sh", "bash", "bat", "ps1", "js", "ts", "java", "go", "rb",
+        "php", "cs", "c", "cpp", "h", "sql", "tf", "hcl", "dockerfile",
+        "html", "htm", "css",
+    }
+    supported_image_exts = {"png", "jpg", "jpeg", "gif", "bmp", "tiff"}
+
+    is_text = ext in supported_text_exts
+    is_image = ext in supported_image_exts
+    is_pdf = ext == "pdf"
+    is_docx = ext == "docx"
+
+    if not (is_text or is_image or is_pdf or is_docx):
+        return "", ext
+
+    try:
+        auth = HTTPBasicAuth(email, api_token)
+        response = requests.get(download_url, auth=auth, timeout=30)
+        response.raise_for_status()
+        content = response.content
+
+        if is_text:
+            return content.decode("utf-8", errors="ignore"), ext
+
+        if is_docx and DOCX_AVAILABLE:
+            doc = python_docx.Document(BytesIO(content))
+            return "\n".join(p.text for p in doc.paragraphs), ext
+
+        if is_pdf and PDF_AVAILABLE:
+            pdf_doc = fitz.open(stream=content, filetype="pdf")
+            return "\n".join(page.get_text() for page in pdf_doc), ext
+
+        if is_image and OCR_AVAILABLE:
+            img = Image.open(BytesIO(content))
+            return pytesseract.image_to_string(img), ext
+
+    except Exception as e:
+        print(f"⚠️  Error extracting text from attachment '{att_title}': {e}")
+
+    return "", ext
 
 
 def get_jira_projects(email, api_token, jira_url):
@@ -399,47 +500,50 @@ def get_project_issues(email, api_token, jira_url, project_key, max_issues=0, ve
     return []
 
 
-def scan_issue_for_secrets(issue, patterns, jira_url):
+def scan_issue_for_secrets(issue, patterns, jira_url, email=None, api_token=None,
+                           scan_attachments=False, max_attachment_size=None):
     """
-    Сканирует один issue на наличие секретов
+    Сканирует один issue на наличие секретов.
+    Опционально сканирует вложения (включая OCR для изображений).
+
+    Args:
+        scan_attachments: если True — скачивает и сканирует вложения
+        max_attachment_size: максимальный размер вложения в байтах (None = без лимита)
     """
     findings = []
     issue_key = issue.get('key', 'UNKNOWN')
     issue_url = f"{jira_url}/browse/{issue_key}"
-    
+
     fields = issue.get('fields', {})
-    
+
     # Автор тикета
     creator = fields.get('creator', {})
     author = creator.get('displayName', 'Unknown') if creator else 'Unknown'
     author_email = creator.get('emailAddress', 'N/A') if creator else 'N/A'
-    
+
     # Дата создания
     created = fields.get('created', 'N/A')
-    
+
     # Summary
     summary = fields.get('summary', '')
-    
+
     # Текст для сканирования
     texts_to_scan = []
-    
+
     # Summary
     if summary:
         texts_to_scan.append(('Summary', summary))
-    
+
     # Description
     description = fields.get('description')
     if description:
-        # Jira может возвращать описание в разных форматах
         if isinstance(description, dict):
-            # ADF (Atlassian Document Format)
             desc_text = extract_text_from_adf(description)
         else:
             desc_text = str(description)
-        
         if desc_text:
             texts_to_scan.append(('Description', desc_text))
-    
+
     # Comments
     comments = fields.get('comment', {}).get('comments', [])
     for idx, comment in enumerate(comments):
@@ -449,14 +553,24 @@ def scan_issue_for_secrets(issue, patterns, jira_url):
                 comment_text = extract_text_from_adf(comment_body)
             else:
                 comment_text = str(comment_body)
-            
             if comment_text:
                 texts_to_scan.append((f'Comment {idx+1}', comment_text))
-    
+
+    # Attachments
+    if scan_attachments and email and api_token:
+        attachments = get_issue_attachments(email, api_token, jira_url, issue_key)
+        for attachment in attachments:
+            att_name = attachment.get("filename", "unknown")
+            text, ext = extract_text_from_attachment(
+                attachment, email, api_token, max_size_bytes=max_attachment_size
+            )
+            if text:
+                texts_to_scan.append((f'Attachment: {att_name}', text))
+
     # Сканируем все тексты
     for location, text in texts_to_scan:
         secrets = scan_text_for_secrets(text, patterns)
-        
+
         for secret in secrets:
             findings.append({
                 'project_key': issue_key.split('-')[0],
@@ -471,7 +585,7 @@ def scan_issue_for_secrets(issue, patterns, jira_url):
                 'secret_value': secret['secret_value'],
                 'context': secret['context']
             })
-    
+
     return findings
 
 
@@ -791,12 +905,32 @@ def parse_arguments():
     parser.add_argument('-q', '--quiet', action='store_true', help='Тихий режим')
     parser.add_argument('-v', '--verbose', action='store_true', help='Детальный вывод (для отладки)')
     
+    # Attachment scanning
+    parser.add_argument('--scan-attachments', action='store_true',
+                        help='Scan issue attachments (txt, json, py, pdf, docx, images via OCR)')
+    parser.add_argument('--max-attachment-size', type=str, default=None,
+                        help='Max attachment size to scan, e.g. 2mb, 500kb (default: no limit)')
+    
     # Email notification arguments (if specified, email will be sent automatically)
     parser.add_argument('--email-sender', type=str, help='Sender email address (must be verified in SES)')
     parser.add_argument('--email-recipient', type=str, help='Recipient email address')
     parser.add_argument('--aws-region', type=str, default='us-east-1', help='AWS region for SES (default: us-east-1)')
     
     return parser.parse_args()
+
+
+def parse_size(size_str):
+    """Parse size string like '2mb' or '500kb' to bytes. Returns None if input is None."""
+    if not size_str:
+        return None
+    size_str = size_str.lower().strip()
+    match = re.match(r"(\d+)(kb|mb|gb)?", size_str)
+    if not match:
+        return None
+    num = int(match.group(1))
+    unit = match.group(2) or "b"
+    multipliers = {"b": 1, "kb": 1024, "mb": 1024 ** 2, "gb": 1024 ** 3}
+    return num * multipliers.get(unit, 1)
 
 
 def main():
@@ -846,6 +980,28 @@ def main():
     if args.scan_secrets:
         print("\n🔐 Начинаем сканирование на секреты...\n")
         
+        # Attachment scanning setup
+        scan_attachments = args.scan_attachments
+        max_attachment_size = parse_size(args.max_attachment_size)
+
+        if scan_attachments:
+            if OCR_AVAILABLE:
+                print("🖼️  OCR enabled (Tesseract) — images will be scanned")
+            else:
+                print("⚠️  OCR unavailable (install Pillow + pytesseract + tesseract)")
+            if PDF_AVAILABLE:
+                print("📄 PDF support enabled (PyMuPDF)")
+            else:
+                print("⚠️  PDF support unavailable (install PyMuPDF: pip install pymupdf)")
+            if DOCX_AVAILABLE:
+                print("📝 DOCX support enabled (python-docx)")
+            else:
+                print("⚠️  DOCX support unavailable (install python-docx)")
+            if max_attachment_size:
+                print(f"📦 Max attachment size: {args.max_attachment_size}\n")
+            else:
+                print("📦 Max attachment size: unlimited\n")
+
         # Загружаем паттерны
         patterns = load_secret_patterns(args.patterns)
         print(f"✅ Загружено паттернов: {len(patterns)}\n")
@@ -866,7 +1022,13 @@ def main():
             
             # Сканируем каждый issue
             for issue in issues:
-                findings = scan_issue_for_secrets(issue, patterns, jira_url)
+                findings = scan_issue_for_secrets(
+                    issue, patterns, jira_url,
+                    email=email,
+                    api_token=api_token,
+                    scan_attachments=scan_attachments,
+                    max_attachment_size=max_attachment_size,
+                )
                 if findings:
                     all_findings.extend(findings)
                     if not args.quiet:
