@@ -1,3 +1,7 @@
 requests
 openpyxl
 boto3
+Pillow
+pytesseract
+pymupdf
+python-docx
