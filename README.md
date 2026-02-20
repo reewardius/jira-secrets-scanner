@@ -1,36 +1,102 @@
-# jira-scanner
+# 🐳 Jira Secret Scanner
 
-Scans all Jira issues (title, description, comments) across all or selected projects. Detects 40+ secret types: AWS keys, GitHub tokens, Stripe keys, OpenAI keys, database connection strings, and more. Exports findings to a formatted .xlsx report. Supports email delivery of reports via AWS SES.
+Scans Jira issues for exposed secrets — API keys, tokens, passwords, and credentials. Detects 40+ secret types across all or selected projects and exports findings to a `.xlsx` report.
 
-#### Configuration
-1. Create your .env file
-Copy the example and fill in your credentials:
-```
-cp .env.example .env
-```
-2. Get a Jira API Token
-```
-Log in to id.atlassian.com
-Go to Security → API tokens
-Click Create API token, give it a name
-Copy the token value — it is shown only once
-```
-🐳 Running with Docker
+---
 
-Build the image
-```
+## 1. Build
+
+```bash
 docker build -t jira-secret-scanner .
 ```
-Run with plain Docker
+
+---
+
+## 2. Configure
+
+Create a `.env` file with your Jira credentials:
+
+```env
+JIRA_EMAIL=user@company.com
+JIRA_TOKEN=ATATT3xFfGF0your_token_here_xxxxxxxxxxxxxxxxxxxxxxxxxxx
+JIRA_URL=https://yourcompany.atlassian.net
 ```
+
+> Generate your API token at: https://id.atlassian.com/manage-profile/security/api-tokens
+
+---
+
+## 3. Run
+
+All commands mount two volumes:
+- `./reports` — output directory where the `.xlsx` report is saved
+- `./.env` — credentials file (read-only)
+
+### Scan all projects
+
+```bash
 docker run --rm \
   -v $(pwd)/reports:/reports \
   -v $(pwd)/.env:/app/.env:ro \
   jira-secret-scanner \
-  --env --scan-secrets --output /reports/jira_secrets_report.xlsx
+  --env --scan-secrets --output /reports/report.xlsx
 ```
-Run with email notification
+
+### Scan specific projects
+
+```bash
+docker run --rm \
+  -v $(pwd)/reports:/reports \
+  -v $(pwd)/.env:/app/.env:ro \
+  jira-secret-scanner \
+  --env --scan-secrets \
+  --projects PROJ1,PROJ2 \
+  --output /reports/report.xlsx
 ```
+
+### Limit issues per project
+
+```bash
+docker run --rm \
+  -v $(pwd)/reports:/reports \
+  -v $(pwd)/.env:/app/.env:ro \
+  jira-secret-scanner \
+  --env --scan-secrets \
+  --max-issues 100 \
+  --output /reports/report.xlsx
+```
+
+### Scan attachments
+
+By default, only text fields are scanned. To also scan attached files, add `--scan-attachments`:
+
+```bash
+docker run --rm \
+  -v $(pwd)/reports:/reports \
+  -v $(pwd)/.env:/app/.env:ro \
+  jira-secret-scanner \
+  --env --scan-secrets \
+  --scan-attachments \
+  --output /reports/report.xlsx
+```
+
+To skip large files, set a size limit:
+
+```bash
+docker run --rm \
+  -v $(pwd)/reports:/reports \
+  -v $(pwd)/.env:/app/.env:ro \
+  jira-secret-scanner \
+  --env --scan-secrets \
+  --scan-attachments --max-attachment-size 5mb \
+  --output /reports/report.xlsx
+```
+
+### Send report by email
+
+Requires [AWS SES](https://aws.amazon.com/ses/) with a verified sender address.
+
+```bash
 docker run --rm \
   -v $(pwd)/reports:/reports \
   -v $(pwd)/.env:/app/.env:ro \
@@ -38,8 +104,62 @@ docker run --rm \
   -e AWS_SECRET_ACCESS_KEY=... \
   jira-secret-scanner \
   --env --scan-secrets \
-  --output /reports/jira_secrets_report.xlsx \
+  --output /reports/report.xlsx \
   --email-sender scanner@company.com \
   --email-recipient security@company.com \
-  --aws-region eu-central-1
+  --aws-region eu-west-1
 ```
+
+---
+
+## What gets scanned?
+
+### By default (`--scan-secrets`)
+
+The scanner reads the following text fields from every issue:
+
+| Field | Description |
+|---|---|
+| **Summary** | Issue title |
+| **Description** | Issue body (plain text and Atlassian Document Format) |
+| **Comments** | All comments on the issue |
+
+No files are downloaded. Fast and sufficient for secrets pasted directly into Jira.
+
+### With `--scan-attachments`
+
+Each attachment is downloaded and its text is extracted before scanning. Supported file types:
+
+**Text & code** — decoded directly, no extra dependencies:
+
+| Extensions | |
+|---|---|
+| `txt` `log` `md` `rst` | Plain text and docs |
+| `json` `yaml` `yml` `toml` `xml` `csv` | Data and config |
+| `env` `conf` `cfg` `ini` `properties` | Environment and config files |
+| `py` `sh` `bash` `bat` `ps1` | Scripts |
+| `js` `ts` `java` `go` `rb` `php` `cs` `c` `cpp` | Source code |
+| `sql` `tf` `hcl` `dockerfile` `html` `css` | Infrastructure and web |
+
+**Documents:**
+
+| Format | Extensions | Method |
+|---|---|---|
+| Word | `docx` | python-docx |
+| PDF | `pdf` | PyMuPDF |
+
+**Images (OCR):**
+
+| Extensions | Engine |
+|---|---|
+| `png` `jpg` `jpeg` `gif` `bmp` `tiff` | Tesseract (English + Russian) |
+
+> OCR works best on clean screenshots with readable text. Handwritten or stylized fonts may produce inaccurate results.
+
+Files with any other extension are silently skipped.
+
+---
+
+## Report
+
+The `.xlsx` report is saved to `./reports/` on the host. Each row shows the project, issue, secret type, matched value, and context. When a secret is found inside an attachment, the **Location** column shows `Attachment: filename.ext`.
