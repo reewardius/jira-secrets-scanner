@@ -5,3 +5,4 @@ Pillow
 pytesseract
 pymupdf
 python-docx
+pyyaml
