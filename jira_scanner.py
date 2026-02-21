@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""
+Скрипт для получения списка доступных Jira проектов (spaces)
+и сканирования тикетов на наличие секретов
+Использует Atlassian API token и email для авторизации
+Выводит результаты в Excel файл с подробной информацией
+"""
 
 import requests
 from requests.auth import HTTPBasicAuth
@@ -16,6 +22,8 @@ from openpyxl.utils import get_column_letter
 from datetime import datetime
 from typing import List, Dict, Tuple
 import warnings
+
+import yaml
 
 # OCR support (optional)
 try:
@@ -105,6 +113,56 @@ def load_secret_patterns(patterns_file='secret_patterns.txt'):
                     group_index = int(parts[2].strip())
                     patterns.append((name, regex, group_index))
     
+    return patterns
+
+
+def load_trufflehog_patterns(patterns_file):
+    """
+    Loads TruffleHog v3 YAML patterns and converts them to internal format.
+
+    TruffleHog v3 format:
+        - name: rule_name
+          keywords:
+            - keyword1
+          regex:
+            rule_name: <regex>
+
+    Converts to: (name, regex, group_index=0)
+    """
+    patterns = []
+
+    if not Path(patterns_file).exists():
+        print(f"⚠️  TruffleHog patterns file '{patterns_file}' not found.")
+        return patterns
+
+    try:
+        with open(patterns_file, 'r', encoding='utf-8') as f:
+            rules = yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        print(f"⚠️  Failed to parse TruffleHog YAML file: {e}")
+        return patterns
+
+    if not isinstance(rules, list):
+        print(f"⚠️  Expected a list of rules in '{patterns_file}', got {type(rules).__name__}")
+        return patterns
+
+    for rule in rules:
+        name = rule.get('name', 'unknown')
+        regexes = rule.get('regex', {})
+
+        if not isinstance(regexes, dict):
+            continue
+
+        for regex_name, regex_pattern in regexes.items():
+            if not regex_pattern:
+                continue
+            try:
+                re.compile(regex_pattern)
+                patterns.append((f"{name} ({regex_name})", regex_pattern, 0))
+            except re.error as e:
+                print(f"⚠️  Invalid regex in TruffleHog rule '{name}': {e}")
+                continue
+
     return patterns
 
 
@@ -789,21 +847,16 @@ def send_email_report(report_filename, findings, scan_stats, email_config):
         # Attach body
         msg.attach(MIMEText(body_text, "plain"))
         
-        # Rename report to fixed name jira_secrets.xlsx and attach
-        fixed_filename = "jira_secrets.xlsx"
+        # Attach report directly — no temp copy needed
         if os.path.exists(report_filename):
-            # Copy to fixed name
-            import shutil
-            shutil.copy(report_filename, fixed_filename)
-            
-            with open(fixed_filename, "rb") as attachment:
+            with open(report_filename, "rb") as attachment:
                 part = MIMEBase("application", "octet-stream")
                 part.set_payload(attachment.read())
-            
+
             encoders.encode_base64(part)
             part.add_header(
                 "Content-Disposition",
-                f"attachment; filename= {fixed_filename}",
+                "attachment; filename=jira_secrets.xlsx",
             )
             msg.attach(part)
         
@@ -900,6 +953,7 @@ def parse_arguments():
     parser.add_argument('--env-file', type=str, default='.env', help='Путь к .env файлу')
     parser.add_argument('--scan-secrets', action='store_true', help='Сканировать issues на секреты')
     parser.add_argument('--patterns', type=str, default='secret_patterns.txt', help='Файл с паттернами секретов')
+    parser.add_argument('--trufflehog-patterns', type=str, default=None, help='TruffleHog v3 YAML patterns file')
     parser.add_argument('--projects', type=str, help='Список проектов для сканирования (через запятую)')
     parser.add_argument('--max-issues', type=int, default=0, help='Максимум issues на проект (0 = все issues)')
     parser.add_argument('-q', '--quiet', action='store_true', help='Тихий режим')
@@ -1004,7 +1058,14 @@ def main():
 
         # Загружаем паттерны
         patterns = load_secret_patterns(args.patterns)
-        print(f"✅ Загружено паттернов: {len(patterns)}\n")
+        print(f"✅ Загружено паттернов (основные): {len(patterns)}")
+
+        if args.trufflehog_patterns:
+            th_patterns = load_trufflehog_patterns(args.trufflehog_patterns)
+            patterns.extend(th_patterns)
+            print(f"✅ Загружено паттернов (TruffleHog): {len(th_patterns)}")
+
+        print(f"✅ Итого паттернов: {len(patterns)}\n")
         
         all_findings = []
         total_issues_scanned = 0
