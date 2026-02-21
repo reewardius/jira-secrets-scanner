@@ -2540,12 +2540,6 @@
   - '2'
   regex:
     Jiratoken - 2: (?:jira).{0,40}\b([a-zA-Z-0-9]{5,24}\@[a-zA-Z-0-9]{3,16}\.com)\b
-- name: Jiratoken - 3
-  keywords:
-  - Jiratoken
-  - '3'
-  regex:
-    Jiratoken - 3: (?:jira).{0,40}\b([a-zA-Z-0-9]{5,24}\.[a-zA-Z-0-9]{3,16}\.[a-zA-Z-0-9]{3,16})\b
 - name: Jotform
   keywords:
   - Jotform
