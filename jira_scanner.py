@@ -156,8 +156,9 @@ def load_trufflehog_patterns(patterns_file):
             if not regex_pattern:
                 continue
             try:
-                re.compile(regex_pattern)
-                patterns.append((f"{name} ({regex_name})", regex_pattern, 0))
+                compiled = re.compile(regex_pattern)
+                group_index = 1 if compiled.groups > 0 else 0
+                patterns.append((f"{name} ({regex_name})", regex_pattern, group_index))
             except re.error as e:
                 print(f"⚠️  Invalid regex in TruffleHog rule '{name}': {e}")
                 continue
@@ -727,7 +728,12 @@ def create_secrets_report(findings, filename="jira_secrets_report.xlsx"):
         
         # Secret value — red font
         secret_cell = sheet_secrets.cell(row=row_num, column=10)
-        secret_cell.value = finding['secret_value']
+        # Prefix with apostrophe to prevent Excel treating value as formula
+        raw_value = str(finding['secret_value'])
+        if raw_value.startswith(('=', '+', '-', '@')):
+            secret_cell.value = "'" + raw_value
+        else:
+            secret_cell.value = raw_value
         secret_cell.font = Font(color='DC143C', bold=True)
         
         sheet_secrets.cell(row=row_num, column=11).value = finding['context']
