@@ -42,6 +42,18 @@ docker run --rm \
   --env --scan-secrets --output /reports/report.xlsx
 ```
 
+### Scan all projects with trufflehog patterns (1600+ regex)
+
+```bash
+docker run --rm \
+  -v $(pwd)/reports:/reports \
+  -v $(pwd)/.env:/app/.env:ro \
+  -v $(pwd)/trufflehog.yaml:/app/trufflehog.yaml:ro \
+  jira-secret-scanner \
+  --trufflehog-patterns trufflehog.yaml \
+  --env --scan-secrets --output /reports/report.xlsx
+```
+
 ### Scan specific projects
 
 ```bash
