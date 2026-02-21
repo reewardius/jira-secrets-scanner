@@ -2217,11 +2217,6 @@
   regex:
     Githubapp - 2: (?:github).{0,40}(-----BEGIN RSA PRIVATE KEY-----\s[A-Za-z0-9+\/\s]*\s-----END
       RSA PRIVATE KEY-----)
-- name: Gitlab
-  keywords:
-  - Gitlab
-  regex:
-    Gitlab: (?:gitlab).{0,40}\b([a-zA-Z0-9\-=_]{20,22})\b
 - name: Gitlabv2
   keywords:
   - Gitlabv2
