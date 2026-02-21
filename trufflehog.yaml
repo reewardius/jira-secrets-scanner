@@ -9854,4 +9854,8 @@
   - auth
   regex:
     docker_registry_auth: auth":.*"(?:[A-Za-z0-9+\/]{4})*(?:[A-Za-z0-9+\/]{4}|[A-Za-z0-9+\/]{3}=|[A-Za-z0-9+\/]{2}={2})
-
+- name: Atlassian API Token
+  keywords:
+    - atlassian
+  regex:
+    Atlassian API Token: '(?:^|[^A-Z])(ATATT[a-zA-Z0-9\-_]{28,})(?:[^a-zA-Z0-9\-_]|$)'
