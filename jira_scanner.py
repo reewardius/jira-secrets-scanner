@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
-Скрипт для получения списка доступных Jira проектов (spaces)
-и сканирования тикетов на наличие секретов
-Использует Atlassian API token и email для авторизации
-Выводит результаты в Excel файл с подробной информацией
+Scans Jira projects and issues for exposed secrets.
+Authenticates via Atlassian email and API token.
+Exports findings to a formatted Excel report.
 """
 
 import requests
@@ -49,7 +48,7 @@ try:
 except ImportError:
     DOCX_AVAILABLE = False
 
-# AWS SES для отправки email
+# AWS SES for email delivery
 try:
     import boto3
     from email.mime.multipart import MIMEMultipart
@@ -63,7 +62,7 @@ except ImportError:
 
 def load_env_file(env_path='.env'):
     """
-    Загружает переменные из .env файла
+    Load variables from a .env file.
     """
     env_vars = {}
     env_file = Path(env_path)
@@ -81,21 +80,21 @@ def load_env_file(env_path='.env'):
 
 def normalize_jira_url(url):
     """
-    Нормализует Jira URL, удаляя конечный слеш
+    Normalize Jira URL by stripping trailing slash.
     """
     return url.rstrip('/')
 
 
 def load_secret_patterns(patterns_file='secret_patterns.txt'):
     """
-    Загружает паттерны для поиска секретов из файла
-    Формат: Name:::Regex:::GroupIndex
+    Load secret detection patterns from file.
+    Format: Name:::Regex:::GroupIndex
     """
     patterns = []
     
     if not Path(patterns_file).exists():
-        print(f"⚠️  Файл с паттернами {patterns_file} не найден. Используются базовые паттерны.")
-        # Базовые паттерны если файл не найден
+        print(f"⚠️  Patterns file {patterns_file} not found. Using built-in fallback patterns.")
+        # Built-in fallback patterns
         return [
             ('AWS Access Key ID', r'(?:^|[^A-Za-z0-9])((AKIA|ASIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA)(?!([A-Z0-9])\3{5,})[A-Z0-9]{16})(?:[^A-Za-z0-9]|$)', 1),
             ('GitHub Personal Access Token', r'(?:^|[^a-z0-9_])(ghp_[0-9a-zA-Z]{36})(?:[^a-zA-Z0-9]|$)', 1),
@@ -168,8 +167,8 @@ def load_trufflehog_patterns(patterns_file):
 
 def scan_text_for_secrets(text: str, patterns: List[Tuple[str, str, int]]) -> List[Dict]:
     """
-    Сканирует текст на наличие секретов используя предоставленные паттерны
-    
+    Scan text for secrets using the provided regex patterns.
+
     Returns:
         List of dicts with keys: secret_type, secret_value, context
     """
@@ -182,7 +181,7 @@ def scan_text_for_secrets(text: str, patterns: List[Tuple[str, str, int]]) -> Li
                 if group_index < len(match.groups()) + 1:
                     secret_value = match.group(group_index) if group_index > 0 else match.group(0)
                     
-                    # Получаем контекст (50 символов до и после)
+                    # Extract surrounding context (50 chars before and after)
                     start = max(0, match.start() - 50)
                     end = min(len(text), match.end() + 50)
                     context = text[start:end].replace('\n', ' ').replace('\r', '').strip()
@@ -193,7 +192,7 @@ def scan_text_for_secrets(text: str, patterns: List[Tuple[str, str, int]]) -> Li
                         'context': context
                     })
         except re.error as e:
-            print(f"⚠️  Ошибка в regex паттерне '{pattern_name}': {e}")
+            print(f"⚠️  Invalid regex pattern '{pattern_name}': {e}")
             continue
     
     return findings
@@ -282,7 +281,7 @@ def extract_text_from_attachment(attachment, email, api_token, max_size_bytes=No
 
 def get_jira_projects(email, api_token, jira_url):
     """
-    Получает список всех доступных Jira проектов с подробной информацией
+    Fetch all accessible Jira projects with full details.
     """
     jira_url = normalize_jira_url(jira_url)
     url = f"{jira_url}/rest/api/3/project/search"
@@ -310,27 +309,27 @@ def get_jira_projects(email, api_token, jira_url):
                     break
                 start_at += max_results
             elif response.status_code == 401:
-                print("❌ Ошибка авторизации. Проверьте email и API token.")
+                print("❌ Authentication failed. Check your email and API token.")
                 return None
             elif response.status_code == 403:
-                print("❌ Доступ запрещен. Проверьте права доступа.")
+                print("❌ Access denied. Check your permissions.")
                 return None
             else:
-                print(f"❌ Ошибка: {response.status_code}")
-                print(f"Ответ: {response.text}")
+                print(f"❌ Error: {response.status_code}")
+                print(f"Response: {response.text}")
                 return None
         
         return all_projects
     except requests.exceptions.RequestException as e:
-        print(f"❌ Ошибка при запросе: {e}")
+        print(f"❌ Request failed: {e}")
         return None
 
 
 def get_project_issues(email, api_token, jira_url, project_key, max_issues=0, verbose=False):
     """
-    Получает список issues для конкретного проекта
-    Пробует разные API endpoints для совместимости
-    max_issues=0 означает получить все issues
+    Fetch issues for a given project.
+    Tries multiple API endpoints for compatibility.
+    max_issues=0 means fetch all issues.
     """
     jira_url = normalize_jira_url(jira_url)
     auth = HTTPBasicAuth(email, api_token)
@@ -338,23 +337,23 @@ def get_project_issues(email, api_token, jira_url, project_key, max_issues=0, ve
     
     all_issues = []
     
-    # Если max_issues=0, устанавливаем очень большой лимит
+    # If max_issues=0, set a large effective limit
     unlimited = (max_issues == 0)
     if unlimited:
-        effective_limit = 999999  # Практически безлимит
+        effective_limit = 999999  # Effectively unlimited
     else:
         effective_limit = max_issues
     
     if verbose:
-        limit_text = "все" if unlimited else str(max_issues)
-        print(f"   🔍 Начинаю поиск issues для проекта {project_key} (лимит: {limit_text})")
+        limit_text = "all" if unlimited else str(max_issues)
+        print(f"   🔍 Fetching issues for project {project_key} (limit: {limit_text})")
     
-    # Метод 1: Board API (для Software/Scrum/Kanban проектов)
+    # Method 1: Board API (Software/Scrum/Kanban projects)
     if verbose:
-        print(f"      → Метод 1: Board API (для Software проектов)")
+        print(f"      → Method 1: Board API")
     
     try:
-        # Ищем boards для проекта
+        # Find boards for the project
         board_endpoint = f"{jira_url}/rest/agile/1.0/board"
         params = {'projectKeyOrId': project_key}
         response = requests.get(board_endpoint, headers=headers, auth=auth, params=params, timeout=30)
@@ -367,22 +366,22 @@ def get_project_issues(email, api_token, jira_url, project_key, max_issues=0, ve
             boards = boards_data.get('values', [])
             
             if verbose:
-                print(f"         Найдено boards: {len(boards)}")
+                print(f"         Boards found: {len(boards)}")
             
             if boards:
                 board_id = boards[0]['id']
                 board_name = boards[0].get('name', 'Unknown')
                 if verbose:
-                    print(f"         Использую board: {board_name} (ID: {board_id})")
+                    print(f"         Using board: {board_name} (ID: {board_id})")
                 
-                # Получаем issues через board с пагинацией
+                # Fetch issues via board with pagination
                 start_at = 0
                 max_results = 50
                 
                 while len(all_issues) < effective_limit:
                     issues_endpoint = f"{jira_url}/rest/agile/1.0/board/{board_id}/issue"
                     
-                    # Определяем сколько issues запрашивать в этой итерации
+                    # Determine how many issues to request in this iteration
                     if unlimited:
                         request_limit = max_results
                     else:
@@ -408,34 +407,34 @@ def get_project_issues(email, api_token, jira_url, project_key, max_issues=0, ve
                         
                         if verbose:
                             progress = f"{len(all_issues)}/{total}" if not unlimited else f"{len(all_issues)}"
-                            print(f"         Загружено {progress} issues")
+                            print(f"         Loaded {progress} issues")
                         
-                        # Проверяем условия выхода
-                        if len(issues) < max_results:  # Последняя страница
+                        # Check exit conditions
+                        if len(issues) < max_results:  # Last page
                             break
-                        if len(all_issues) >= total:  # Получили все
+                        if len(all_issues) >= total:  # Got all issues
                             break
-                        if not unlimited and len(all_issues) >= effective_limit:  # Достигли лимита
+                        if not unlimited and len(all_issues) >= effective_limit:  # Reached limit
                             break
                         
                         start_at += max_results
                     else:
                         if verbose:
-                            print(f"         ⚠️  Ошибка пагинации: {response.status_code}")
+                            print(f"         ⚠️  Pagination error: {response.status_code}")
                         break
                 
                 if all_issues:
                     if verbose:
-                        print(f"         ✅ Получено через Board API: {len(all_issues)} issues")
+                        print(f"         ✅ Fetched via Board API: {len(all_issues)} issues")
                     return all_issues
                         
     except Exception as e:
         if verbose:
-            print(f"         ❌ Board API исключение: {e}")
+            print(f"         ❌ Board API exception: {e}")
     
-    # Метод 2: JQL Search (классический метод)
+    # Method 2: JQL Search
     if verbose:
-        print(f"      → Метод 2: JQL Search API")
+        print(f"      → Method 2: JQL Search API")
     
     jql_variants = [
         f'project = "{project_key}" ORDER BY created DESC',
@@ -450,14 +449,14 @@ def get_project_issues(email, api_token, jira_url, project_key, max_issues=0, ve
             start_at = 0
             max_results = 50
             
-            # Пробуем API v2 (более совместимый)
+            # Try API v2 (broader compatibility)
             endpoint = f"{jira_url}/rest/api/2/search"
             
             if verbose:
-                print(f"         Пробую JQL: {jql}")
+                print(f"         Trying JQL: {jql}")
             
             while len(all_issues) < effective_limit:
-                # Определяем сколько issues запрашивать
+                # Determine how many issues to request
                 if unlimited:
                     request_limit = max_results
                 else:
@@ -483,36 +482,36 @@ def get_project_issues(email, api_token, jira_url, project_key, max_issues=0, ve
                     all_issues.extend(issues)
                     
                     if verbose and start_at == 0:
-                        print(f"         Total issues в проекте: {total}")
+                        print(f"         Total issues in project: {total}")
                     
-                    # Проверяем условия выхода
-                    if len(issues) < max_results:  # Последняя страница
+                    # Check exit conditions
+                    if len(issues) < max_results:  # Last page
                         break
-                    if len(all_issues) >= total:  # Получили все
+                    if len(all_issues) >= total:  # Got all issues
                         break
-                    if not unlimited and len(all_issues) >= effective_limit:  # Достигли лимита
+                    if not unlimited and len(all_issues) >= effective_limit:  # Reached limit
                         break
                     
                     start_at += max_results
                 else:
                     if verbose:
                         error_msg = response.text[:150] if len(response.text) > 150 else response.text
-                        print(f"         ⚠️  Статус {response.status_code}: {error_msg}")
+                        print(f"         ⚠️  Status {response.status_code}: {error_msg}")
                     break
             
             if all_issues:
                 if verbose:
-                    print(f"         ✅ Получено через JQL: {len(all_issues)} issues")
+                    print(f"         ✅ Fetched via JQL: {len(all_issues)} issues")
                 return all_issues
                 
         except Exception as e:
             if verbose:
-                print(f"         ❌ Исключение: {e}")
+                print(f"         ❌ Exception: {e}")
             continue
     
-    # Метод 3: Прямой доступ к project issues (некоторые старые версии Jira)
+    # Method 3: Direct project issues access (older Jira versions)
     if verbose:
-        print(f"      → Метод 3: Project Issues API")
+        print(f"      → Method 3: Project Issues API")
     
     try:
         endpoint = f"{jira_url}/rest/api/2/project/{project_key}"
@@ -522,8 +521,8 @@ def get_project_issues(email, api_token, jira_url, project_key, max_issues=0, ve
             print(f"         Project API: {response.status_code}")
         
         if response.status_code == 200:
-            # Проект существует, но это не дает issues напрямую
-            # Пробуем простой JQL без фильтров
+            # Project exists but does not expose issues directly
+            # Try simple JQL without filters
             endpoint = f"{jira_url}/rest/api/2/search"
             params = {
                 'jql': f'key ~ "{project_key}-*"',
@@ -539,21 +538,21 @@ def get_project_issues(email, api_token, jira_url, project_key, max_issues=0, ve
                 
                 if issues:
                     if verbose:
-                        print(f"         ✅ Получено через key search: {len(issues)} issues")
+                        print(f"         ✅ Fetched via key search: {len(issues)} issues")
                     return issues
                     
     except Exception as e:
         if verbose:
-            print(f"         ❌ Исключение: {e}")
+            print(f"         ❌ Exception: {e}")
     
-    # Если ничего не сработало
+    # All methods exhausted
     if verbose:
-        print(f"      ❌ Все методы не дали результата")
-        print(f"      ℹ️  Возможные причины:")
-        print(f"          - Проект пустой (нет issues)")
-        print(f"          - Недостаточно прав для просмотра issues")
-        print(f"          - Проект заархивирован")
-        print(f"          - Специальный тип проекта")
+        print(f"      ❌ All methods returned no results")
+        print(f"      ℹ️  Possible reasons:")
+        print(f"          - Project is empty (no issues)")
+        print(f"          - Insufficient permissions to view issues")
+        print(f"          - Project is archived")
+        print(f"          - Special project type")
     
     return []
 
@@ -561,12 +560,12 @@ def get_project_issues(email, api_token, jira_url, project_key, max_issues=0, ve
 def scan_issue_for_secrets(issue, patterns, jira_url, email=None, api_token=None,
                            scan_attachments=False, max_attachment_size=None):
     """
-    Сканирует один issue на наличие секретов.
-    Опционально сканирует вложения (включая OCR для изображений).
+    Scan a single issue for secrets.
+    Optionally scans attachments including images via OCR.
 
     Args:
-        scan_attachments: если True — скачивает и сканирует вложения
-        max_attachment_size: максимальный размер вложения в байтах (None = без лимита)
+        scan_attachments: if True, download and scan attachments
+        max_attachment_size: max attachment size in bytes (None = no limit)
     """
     findings = []
     issue_key = issue.get('key', 'UNKNOWN')
@@ -574,18 +573,18 @@ def scan_issue_for_secrets(issue, patterns, jira_url, email=None, api_token=None
 
     fields = issue.get('fields', {})
 
-    # Автор тикета
+    # Issue author
     creator = fields.get('creator', {})
     author = creator.get('displayName', 'Unknown') if creator else 'Unknown'
     author_email = creator.get('emailAddress', 'N/A') if creator else 'N/A'
 
-    # Дата создания
+    # Creation date
     created = fields.get('created', 'N/A')
 
     # Summary
     summary = fields.get('summary', '')
 
-    # Текст для сканирования
+    # Fields to scan
     texts_to_scan = []
 
     # Summary
@@ -625,7 +624,7 @@ def scan_issue_for_secrets(issue, patterns, jira_url, email=None, api_token=None
             if text:
                 texts_to_scan.append((f'Attachment: {att_name}', text))
 
-    # Сканируем все тексты
+    # Scan all collected text
     for location, text in texts_to_scan:
         secrets = scan_text_for_secrets(text, patterns)
 
@@ -649,7 +648,7 @@ def scan_issue_for_secrets(issue, patterns, jira_url, email=None, api_token=None
 
 def extract_text_from_adf(adf_content):
     """
-    Извлекает текст из Atlassian Document Format (ADF)
+    Extract plain text from Atlassian Document Format (ADF).
     """
     if not isinstance(adf_content, dict):
         return str(adf_content)
@@ -658,11 +657,11 @@ def extract_text_from_adf(adf_content):
     
     def extract_recursive(node):
         if isinstance(node, dict):
-            # Если есть text, добавляем его
+            # Collect text nodes
             if 'text' in node:
                 text_parts.append(node['text'])
             
-            # Рекурсивно обрабатываем content
+            # Recurse into content
             if 'content' in node and isinstance(node['content'], list):
                 for child in node['content']:
                     extract_recursive(child)
@@ -676,21 +675,21 @@ def extract_text_from_adf(adf_content):
 
 def create_secrets_report(findings, filename="jira_secrets_report.xlsx"):
     """
-    Создает Excel отчет с найденными секретами
+    Create a formatted Excel report with all findings.
     """
     wb = Workbook()
     
-    # Лист 1: Найденные секреты
+    # Sheet 1: Findings
     sheet_secrets = wb.active
     sheet_secrets.title = "Found Secrets"
     
-    # Заголовки
+    # Headers
     headers = [
         'Project', 'Issue Key', 'Issue URL', 'Summary', 'Author', 'Author Email',
         'Created', 'Location', 'Secret Type', 'Secret Value', 'Context'
     ]
     
-    # Стиль заголовков
+    # Header style
     header_fill = PatternFill(start_color='DC143C', end_color='DC143C', fill_type='solid')
     header_font = Font(bold=True, color='FFFFFF', size=11)
     border = Border(
@@ -708,12 +707,12 @@ def create_secrets_report(findings, filename="jira_secrets_report.xlsx"):
         cell.alignment = Alignment(horizontal='center', vertical='center')
         cell.border = border
     
-    # Данные
+    # Data rows
     for row_num, finding in enumerate(findings, 2):
         sheet_secrets.cell(row=row_num, column=1).value = finding['project_key']
         sheet_secrets.cell(row=row_num, column=2).value = finding['issue_key']
         
-        # URL как гиперссылка
+        # URL as hyperlink
         url_cell = sheet_secrets.cell(row=row_num, column=3)
         url_cell.value = finding['issue_url']
         url_cell.hyperlink = finding['issue_url']
@@ -726,18 +725,18 @@ def create_secrets_report(findings, filename="jira_secrets_report.xlsx"):
         sheet_secrets.cell(row=row_num, column=8).value = finding['location']
         sheet_secrets.cell(row=row_num, column=9).value = finding['secret_type']
         
-        # Secret value - красным шрифтом
+        # Secret value — red font
         secret_cell = sheet_secrets.cell(row=row_num, column=10)
         secret_cell.value = finding['secret_value']
         secret_cell.font = Font(color='DC143C', bold=True)
         
         sheet_secrets.cell(row=row_num, column=11).value = finding['context']
         
-        # Границы для всех ячеек
+        # Apply borders to all cells
         for col_num in range(1, len(headers) + 1):
             sheet_secrets.cell(row=row_num, column=col_num).border = border
     
-    # Ширина колонок
+    # Column widths
     sheet_secrets.column_dimensions['A'].width = 12  # Project
     sheet_secrets.column_dimensions['B'].width = 15  # Issue Key
     sheet_secrets.column_dimensions['C'].width = 45  # URL
@@ -750,22 +749,22 @@ def create_secrets_report(findings, filename="jira_secrets_report.xlsx"):
     sheet_secrets.column_dimensions['J'].width = 50  # Secret Value
     sheet_secrets.column_dimensions['K'].width = 60  # Context
     
-    # Перенос текста
+    # Text wrapping
     for row in range(2, len(findings) + 2):
         for col in [4, 10, 11]:  # Summary, Secret, Context
             sheet_secrets.cell(row=row, column=col).alignment = Alignment(wrap_text=True, vertical='top')
     
-    # Фиксация заголовков
+    # Freeze header row
     sheet_secrets.freeze_panes = 'A2'
     
-    # Лист 2: Статистика
+    # Sheet 2: Statistics
     sheet_stats = wb.create_sheet("Statistics")
     
-    # Заголовок статистики
+    # Statistics header
     sheet_stats['A1'] = 'Secret Scanning Statistics'
     sheet_stats['A1'].font = Font(bold=True, size=14)
     
-    # Статистика
+    # Stats data
     stats_data = [
         ['Total Secrets Found:', len(findings)],
         ['Unique Secret Types:', len(set(f['secret_type'] for f in findings))],
@@ -778,7 +777,7 @@ def create_secrets_report(findings, filename="jira_secrets_report.xlsx"):
         sheet_stats.cell(row=idx, column=1).font = Font(bold=True)
         sheet_stats.cell(row=idx, column=2).value = value
     
-    # Группировка по типам секретов
+    # Group by secret type
     sheet_stats.cell(row=len(stats_data) + 5, column=1).value = 'Secrets by Type:'
     sheet_stats.cell(row=len(stats_data) + 5, column=1).font = Font(bold=True, size=12)
     
@@ -924,40 +923,40 @@ This is an automated report generated by Jira Secrets Scanner."""
 
 def parse_arguments():
     """
-    Парсинг аргументов командной строки
+    Parse command-line arguments.
     """
     parser = argparse.ArgumentParser(
-        description='Сканировать Jira проекты на наличие секретов',
+        description='Scan Jira projects and issues for exposed secrets.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Примеры использования:
-  # Сканировать все проекты
-  python jira_secret_scanner.py --env --scan-secrets
-  
-  # Сканировать конкретные проекты
-  python jira_secret_scanner.py -e user@company.com -t TOKEN -u URL --scan-secrets --projects PROJ1,PROJ2
-  
-  # Ограничить количество issues на проект
-  python jira_secret_scanner.py --env --scan-secrets --max-issues 50
-  
-  # Указать файл с паттернами
-  python jira_secret_scanner.py --env --scan-secrets --patterns custom_patterns.txt
+Examples:
+  # Scan all projects
+  python jira_scanner.py --env --scan-secrets
+
+  # Scan specific projects
+  python jira_scanner.py -e user@company.com -t TOKEN -u URL --scan-secrets --projects PROJ1,PROJ2
+
+  # Limit issues per project
+  python jira_scanner.py --env --scan-secrets --max-issues 50
+
+  # Use custom patterns file
+  python jira_scanner.py --env --scan-secrets --patterns custom_patterns.txt
         """
     )
     
     parser.add_argument('-e', '--email', type=str, help='Atlassian email')
     parser.add_argument('-t', '--token', type=str, help='Atlassian API token')
-    parser.add_argument('-u', '--url', type=str, help='URL Jira инстанса')
-    parser.add_argument('-o', '--output', type=str, help='Имя выходного файла')
-    parser.add_argument('--env', action='store_true', help='Использовать .env файл')
-    parser.add_argument('--env-file', type=str, default='.env', help='Путь к .env файлу')
-    parser.add_argument('--scan-secrets', action='store_true', help='Сканировать issues на секреты')
-    parser.add_argument('--patterns', type=str, default='secret_patterns.txt', help='Файл с паттернами секретов')
+    parser.add_argument('-u', '--url', type=str, help='Jira instance URL')
+    parser.add_argument('-o', '--output', type=str, help='Output filename')
+    parser.add_argument('--env', action='store_true', help='Load credentials from .env file')
+    parser.add_argument('--env-file', type=str, default='.env', help='Path to .env file')
+    parser.add_argument('--scan-secrets', action='store_true', help='Enable secret scanning')
+    parser.add_argument('--patterns', type=str, default='secret_patterns.txt', help='Secret patterns file (Name:::Regex:::GroupIndex format)')
     parser.add_argument('--trufflehog-patterns', type=str, default=None, help='TruffleHog v3 YAML patterns file')
-    parser.add_argument('--projects', type=str, help='Список проектов для сканирования (через запятую)')
-    parser.add_argument('--max-issues', type=int, default=0, help='Максимум issues на проект (0 = все issues)')
-    parser.add_argument('-q', '--quiet', action='store_true', help='Тихий режим')
-    parser.add_argument('-v', '--verbose', action='store_true', help='Детальный вывод (для отладки)')
+    parser.add_argument('--projects', type=str, help='Comma-separated project keys to scan (default: all)')
+    parser.add_argument('--max-issues', type=int, default=0, help='Max issues per project; 0 = unlimited (default: 0)')
+    parser.add_argument('-q', '--quiet', action='store_true', help='Suppress per-issue output')
+    parser.add_argument('-v', '--verbose', action='store_true', help='Verbose debug output')
     
     # Attachment scanning
     parser.add_argument('--scan-attachments', action='store_true',
@@ -989,50 +988,50 @@ def parse_size(size_str):
 
 def main():
     """
-    Основная функция
+    Main entry point.
     """
     args = parse_arguments()
     
     print("🔍 Jira Secret Scanner")
     print("="*80)
     
-    # Загружаем .env файл
+    # Load .env file
     env_vars = {}
     if args.env:
         env_vars = load_env_file(args.env_file)
         if env_vars:
-            print(f"✅ Загружены данные из {args.env_file}\n")
+            print(f"✅ Loaded config from {args.env_file}\n")
     
-    # Получаем credentials
-    email = args.email or env_vars.get('JIRA_EMAIL') or input("Введите ваш Atlassian email: ").strip()
-    api_token = args.token or env_vars.get('JIRA_TOKEN') or input("Введите ваш API token: ").strip()
-    jira_url = args.url or env_vars.get('JIRA_URL') or input("Введите URL Jira: ").strip()
+    # Resolve credentials
+    email = args.email or env_vars.get('JIRA_EMAIL') or input("Enter your Atlassian email: ").strip()
+    api_token = args.token or env_vars.get('JIRA_TOKEN') or input("Enter your API token: ").strip()
+    jira_url = args.url or env_vars.get('JIRA_URL') or input("Enter your Jira URL: ").strip()
     
     if not email or not api_token or not jira_url:
-        print("❌ Все поля обязательны!")
+        print("❌ Email, token, and URL are required.")
         sys.exit(1)
     
     jira_url = normalize_jira_url(jira_url)
     
-    # Получаем проекты
-    print("\n🔄 Получаем список проектов...")
+    # Fetch projects
+    print("\n🔄 Fetching projects...")
     projects = get_jira_projects(email, api_token, jira_url)
     
     if not projects:
-        print("❌ Не удалось получить список проектов")
+        print("❌ Failed to fetch projects.")
         sys.exit(1)
     
-    print(f"✅ Найдено проектов: {len(projects)}\n")
+    print(f"✅ Projects found: {len(projects)}\n")
     
-    # Фильтруем проекты если указаны конкретные
+    # Filter projects if specific keys were provided
     if args.projects:
         selected_keys = [k.strip().upper() for k in args.projects.split(',')]
         projects = [p for p in projects if p.get('key', '').upper() in selected_keys]
-        print(f"🎯 Выбрано проектов для сканирования: {len(projects)}")
+        print(f"🎯 Projects selected for scanning: {len(projects)}")
     
-    # Сканирование на секреты
+    # Secret scanning
     if args.scan_secrets:
-        print("\n🔐 Начинаем сканирование на секреты...\n")
+        print("\n🔐 Starting secret scan...\n")
         
         # Attachment scanning setup
         scan_attachments = args.scan_attachments
@@ -1056,16 +1055,13 @@ def main():
             else:
                 print("📦 Max attachment size: unlimited\n")
 
-        # Загружаем паттерны
-        patterns = load_secret_patterns(args.patterns)
-        print(f"✅ Загружено паттернов (основные): {len(patterns)}")
-
+        # Load patterns
         if args.trufflehog_patterns:
-            th_patterns = load_trufflehog_patterns(args.trufflehog_patterns)
-            patterns.extend(th_patterns)
-            print(f"✅ Загружено паттернов (TruffleHog): {len(th_patterns)}")
-
-        print(f"✅ Итого паттернов: {len(patterns)}\n")
+            patterns = load_trufflehog_patterns(args.trufflehog_patterns)
+            print(f"✅ Patterns loaded (TruffleHog): {len(patterns)}\n")
+        else:
+            patterns = load_secret_patterns(args.patterns)
+            print(f"✅ Patterns loaded: {len(patterns)}\n")
         
         all_findings = []
         total_issues_scanned = 0
@@ -1074,14 +1070,14 @@ def main():
             project_key = project.get('key', 'UNKNOWN')
             project_name = project.get('name', 'Unknown')
             
-            print(f"📊 Сканирую проект: {project_key} - {project_name}")
+            print(f"📊 Scanning project: {project_key} - {project_name}")
             
-            # Получаем issues
+            # Fetch issues
             issues = get_project_issues(email, api_token, jira_url, project_key, args.max_issues, args.verbose)
-            print(f"   Получено issues: {len(issues)}")
+            print(f"   Issues fetched: {len(issues)}")
             total_issues_scanned += len(issues)
             
-            # Сканируем каждый issue
+            # Scan each issue
             for issue in issues:
                 findings = scan_issue_for_secrets(
                     issue, patterns, jira_url,
@@ -1093,14 +1089,14 @@ def main():
                 if findings:
                     all_findings.extend(findings)
                     if not args.quiet:
-                        print(f"   ⚠️  Найдено секретов в {issue.get('key')}: {len(findings)}")
+                        print(f"   ⚠️  Secrets found in {issue.get('key')}: {len(findings)}")
             
             print()
         
-        # Создаем отчет
-        print(f"\n📊 Всего найдено секретов: {len(all_findings)}\n")
+        # Generate report
+        print(f"\n📊 Total secrets found: {len(all_findings)}\n")
         
-        # Статистика для email
+        # Stats for email
         scan_stats = {
             'projects_scanned': len(projects),
             'issues_scanned': total_issues_scanned,
@@ -1115,21 +1111,21 @@ def main():
             if not report_filename.endswith('.xlsx'):
                 report_filename += '.xlsx'
             
-            print("📝 Создаю отчет...")
+            print("📝 Generating report...")
             create_secrets_report(all_findings, report_filename)
-            print(f"✅ Отчет создан: {report_filename}")
+            print(f"✅ Report saved: {report_filename}")
             
-            # Краткая статистика
-            print(f"\n📈 Статистика:")
-            print(f"   Затронуто проектов: {len(set(f['project_key'] for f in all_findings))}")
-            print(f"   Затронуто issues: {len(set(f['issue_key'] for f in all_findings))}")
-            print(f"   Типов секретов: {len(set(f['secret_type'] for f in all_findings))}")
+            # Summary stats
+            print(f"\n📈 Summary:")
+            print(f"   Affected projects: {len(set(f['project_key'] for f in all_findings))}")
+            print(f"   Affected issues: {len(set(f['issue_key'] for f in all_findings))}")
+            print(f"   Secret types: {len(set(f['secret_type'] for f in all_findings))}")
         else:
-            print("✅ Секретов не найдено!")
+            print("✅ No secrets found.")
         
-        # Отправка email если указаны sender и recipient
+        # Send email if sender and recipient are configured
         if args.email_sender and args.email_recipient:
-            print("\n📧 Отправка email отчета...")
+            print("\n📧 Sending email report...")
             
             email_config = {
                 'sender': args.email_sender,
@@ -1137,7 +1133,7 @@ def main():
                 'aws_region': args.aws_region
             }
             
-            # Создаем временный отчет если не был создан (нет секретов)
+            # Create empty report if no secrets were found
             if not report_filename:
                 report_filename = "jira_secrets_report_temp.xlsx"
                 create_secrets_report(all_findings, report_filename)
@@ -1145,7 +1141,7 @@ def main():
             send_email_report(report_filename, all_findings, scan_stats, email_config)
     
     else:
-        print("ℹ️  Используйте флаг --scan-secrets для сканирования на секреты")
+        print("ℹ️  Use --scan-secrets flag to enable secret scanning.")
 
 
 if __name__ == "__main__":
