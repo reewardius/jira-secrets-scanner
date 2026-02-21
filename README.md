@@ -42,7 +42,7 @@ docker run --rm \
   --env --scan-secrets --output /reports/report.xlsx
 ```
 
-### Scan all projects with trufflehog patterns (1600+ regex)
+### Scan all projects with trufflehog patterns (1600+ patterns)
 
 ```bash
 docker run --rm \
