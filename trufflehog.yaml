@@ -1,108 +1,54 @@
+- name: AWS Access Key ID
+  keywords:
+  - aws
+  regex:
+    AWS Access Key ID: '(?<![A-Za-z0-9])(AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}(?![A-Za-z0-9])'
+- name: AWS Secret Access Key
+  keywords:
+  - aws
+  regex:
+    AWS Secret Access Key: (?i)(aws_secret_access_key|secret_access_key)\s*[=:]\s*[A-Za-z0-9/+=]{40}
 - name: AWS API Gateway
   keywords:
-  - AWS
-  - API
-  - Gateway
+  - aws
   regex:
-    AWS API Gateway: '[0-9a-z]+.execute-api.[0-9a-z._-]+.amazonaws.com'
-- name: AWS API Key
-  keywords:
-  - AWS
-  - API
-  - Key
-  regex:
-    AWS API Key: AKIA[0-9A-Z]{16}
-- name: AWS ARN
-  keywords:
-  - AWS
-  - ARN
-  regex:
-    AWS ARN: arn:aws:[a-z0-9-]+:[a-z]{2}-[a-z]+-[0-9]+:[0-9]+:.+
-- name: AWS Access Key ID Value
-  keywords:
-  - AWS
-  - Access
-  - Key
-  - ID
-  - Value
-  regex:
-    AWS Access Key ID Value: (A3T[A-Z0-9]|AKIA|AGPA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}
-- name: AWS AppSync GraphQL Key
-  keywords:
-  - AWS
-  - AppSync
-  - GraphQL
-  - Key
-  regex:
-    AWS AppSync GraphQL Key: da2-[a-z0-9]{26}
-- name: AWS EC2 External
-  keywords:
-  - AWS
-  - EC2
-  - External
-  regex:
-    AWS EC2 External: ec2-[0-9a-z._-]+.compute(-1)?.amazonaws.com
-- name: AWS EC2 Internal
-  keywords:
-  - AWS
-  - EC2
-  - Internal
-  regex:
-    AWS EC2 Internal: '[0-9a-z._-]+.compute(-1)?.internal'
-- name: AWS ELB
-  keywords:
-  - AWS
-  - ELB
-  regex:
-    AWS ELB: '[0-9a-z._-]+.elb.amazonaws.com'
-- name: AWS ElasticCache
-  keywords:
-  - AWS
-  - ElasticCache
-  regex:
-    AWS ElasticCache: '[0-9a-z._-]+.cache.amazonaws.com'
-- name: AWS MWS ID
-  keywords:
-  - AWS
-  - MWS
-  - ID
-  regex:
-    AWS MWS ID: mzn\.mws\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
-- name: AWS MWS key
-  keywords:
-  - AWS
-  - MWS
-  - key
-  regex:
-    AWS MWS key: amzn\.mws\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
-- name: AWS RDS
-  keywords:
-  - AWS
-  - RDS
-  regex:
-    AWS RDS: '[0-9a-z._-]+.rds.amazonaws.com'
+    AWS API Gateway: '[0-9a-z]+\.execute-api\.[a-z]{2}-[a-z]+-[0-9]+\.amazonaws\.com'
 - name: AWS S3 Bucket
   keywords:
-  - AWS
-  - S3
-  - Bucket
+  - aws
+  - s3
   regex:
-    AWS S3 Bucket: s3://[0-9a-z._/-]+
-- name: AWS client ID
+    AWS S3 Bucket: 's3://[0-9a-z][0-9a-z._-]{2,61}[0-9a-z](/[^\s"''<>]*)?'
+- name: AWS MWS Key
   keywords:
-  - AWS
-  - client
-  - ID
+  - aws
   regex:
-    AWS client ID: (A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}
-- name: AWS cred file info
+    AWS MWS Key: 'amzn\.mws\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+- name: AWS AppSync GraphQL Key
   keywords:
-  - AWS
-  - cred
-  - file
-  - info
+  - aws
   regex:
-    AWS cred file info: (aws_access_key_id|aws_secret_access_key)
+    AWS AppSync GraphQL Key: 'da2-[a-z0-9]{26}'
+- name: AWS RDS Endpoint
+  keywords:
+  - aws
+  - rds
+  regex:
+    AWS RDS Endpoint: '[a-z0-9-]+\.[a-z0-9]+\.rds\.amazonaws\.com'
+- name: AWS ELB Endpoint
+  keywords:
+  - elb
+  - amazonaws
+  - aws
+  regex:
+    AWS ELB Endpoint: '[a-z0-9-]+\.[a-z]{2}-[a-z]+-[0-9]+\.elb\.amazonaws\.com'
+- name: AWS Cred File
+  keywords:
+  - aws_access_key_id
+  - aws_secret_access_key
+  - aws
+  regex:
+    AWS Cred File: '(?i)(aws_access_key_id|aws_secret_access_key)\s*=\s*[A-Za-z0-9/+=]{16,}'
 - name: Abbysale
   keywords:
   - Abbysale
