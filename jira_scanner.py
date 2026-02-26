@@ -115,7 +115,7 @@ def load_secret_patterns(patterns_file='secret_patterns.txt'):
     return patterns
 
 
-def load_trufflehog_patterns(patterns_file):
+def load_trufflehog_patterns(patterns_file, include_keywords=None, exclude_keywords=None):
     """
     Loads TruffleHog v3 YAML patterns and converts them to internal format.
 
@@ -127,6 +127,13 @@ def load_trufflehog_patterns(patterns_file):
             rule_name: <regex>
 
     Converts to: (name, regex, group_index=0)
+
+    Args:
+        patterns_file: Path to TruffleHog YAML file.
+        include_keywords: If set, only include detectors whose keywords field
+                          contains at least one of these values (case-insensitive).
+        exclude_keywords: If set, exclude detectors whose keywords field
+                          contains any of these values (case-insensitive).
     """
     patterns = []
 
@@ -145,12 +152,32 @@ def load_trufflehog_patterns(patterns_file):
         print(f"⚠️  Expected a list of rules in '{patterns_file}', got {type(rules).__name__}")
         return patterns
 
+    # Normalize filter sets to lowercase
+    include_set = {kw.strip().lower() for kw in include_keywords} if include_keywords else None
+    exclude_set = {kw.strip().lower() for kw in exclude_keywords} if exclude_keywords else None
+
+    skipped_include = 0
+    skipped_exclude = 0
+
     for rule in rules:
         name = rule.get('name', 'unknown')
         regexes = rule.get('regex', {})
+        rule_keywords = [kw.lower() for kw in rule.get('keywords', [])]
 
         if not isinstance(regexes, dict):
             continue
+
+        # --trufflehog-keywords filter: detector must match at least one include keyword
+        if include_set is not None:
+            if not any(kw in include_set for kw in rule_keywords):
+                skipped_include += 1
+                continue
+
+        # --trufflehog-exclude-keywords filter: detector must NOT match any exclude keyword
+        if exclude_set is not None:
+            if any(kw in exclude_set for kw in rule_keywords):
+                skipped_exclude += 1
+                continue
 
         for regex_name, regex_pattern in regexes.items():
             if not regex_pattern:
@@ -158,12 +185,20 @@ def load_trufflehog_patterns(patterns_file):
             try:
                 compiled = re.compile(regex_pattern)
                 group_index = 1 if compiled.groups > 0 else 0
-                patterns.append((f"{name} ({regex_name})", regex_pattern, group_index))
+                patterns.append((name, regex_pattern, group_index))
             except re.error as e:
                 print(f"⚠️  Invalid regex in TruffleHog rule '{name}': {e}")
                 continue
 
-    return patterns
+    total_skipped = skipped_include + skipped_exclude
+    stats = {
+        'total':           len(rules),
+        'skipped_include': skipped_include,
+        'skipped_exclude': skipped_exclude,
+        'total_skipped':   total_skipped,
+        'loaded':          len(patterns),
+    }
+    return patterns, stats
 
 
 def scan_text_for_secrets(text: str, patterns: List[Tuple[str, str, int]]) -> List[Dict]:
@@ -861,7 +896,7 @@ def send_email_report(report_filename, findings, scan_stats, email_config):
             encoders.encode_base64(part)
             part.add_header(
                 "Content-Disposition",
-                "attachment; filename=jira_secrets.xlsx",
+                f"attachment; filename=jira_secrets.xlsx",
             )
             msg.attach(part)
         
@@ -947,6 +982,15 @@ Examples:
 
   # Use custom patterns file
   python jira_scanner.py --env --scan-secrets --patterns custom_patterns.txt
+
+  # Use TruffleHog YAML with all detectors
+  python jira_scanner.py --env --scan-secrets -tp detectors.yaml
+
+  # Only include AWS-related TruffleHog detectors
+  python jira_scanner.py --env --scan-secrets -tp detectors.yaml -tk aws
+
+  # Include aws and api detectors, but exclude gateway ones
+  python jira_scanner.py --env --scan-secrets -tp detectors.yaml -tk aws,api -tek gateway,arn
         """
     )
     
@@ -958,11 +1002,23 @@ Examples:
     parser.add_argument('--env-file', type=str, default='.env', help='Path to .env file')
     parser.add_argument('--scan-secrets', action='store_true', help='Enable secret scanning')
     parser.add_argument('--patterns', type=str, default='secret_patterns.txt', help='Secret patterns file (Name:::Regex:::GroupIndex format)')
-    parser.add_argument('--trufflehog-patterns', type=str, default=None, help='TruffleHog v3 YAML patterns file')
+    parser.add_argument('--trufflehog-patterns', '-tp', type=str, default=None,
+                        help='Path to a TruffleHog v3 YAML file with detectors. '
+                             'When set, uses TruffleHog YAML instead of secret_patterns.txt. '
+                             'Enables -tk and -tek filters.')
+    parser.add_argument('--trufflehog-keywords', '-tk', type=str, default=None,
+                        help='Include only TruffleHog detectors whose keywords field matches any of the '
+                             'specified values (comma-separated). Example: aws,api,internal')
+    parser.add_argument('--trufflehog-exclude-keywords', '-tek', type=str, default=None,
+                        help='Exclude TruffleHog detectors whose keywords field matches any of the '
+                             'specified values (comma-separated). Example: gateway,arn')
     parser.add_argument('--projects', type=str, help='Comma-separated project keys to scan (default: all)')
     parser.add_argument('--max-issues', type=int, default=0, help='Max issues per project; 0 = unlimited (default: 0)')
     parser.add_argument('-q', '--quiet', action='store_true', help='Suppress per-issue output')
     parser.add_argument('-v', '--verbose', action='store_true', help='Verbose debug output')
+    parser.add_argument('--no-duplicates', '-nd', action='store_true',
+                        help='Deduplicate findings by context — skip entries where the same context '
+                             'was already reported (useful when multiple detectors match the same secret)')
     
     # Attachment scanning
     parser.add_argument('--scan-attachments', action='store_true',
@@ -1062,12 +1118,31 @@ def main():
                 print("📦 Max attachment size: unlimited\n")
 
         # Load patterns
+        if args.trufflehog_keywords and not args.trufflehog_patterns:
+            print("\u274c  -tk / --trufflehog-keywords requires -tp / --trufflehog-patterns to be set.")
+            sys.exit(1)
+        if args.trufflehog_exclude_keywords and not args.trufflehog_patterns:
+            print("\u274c  -tek / --trufflehog-exclude-keywords requires -tp / --trufflehog-patterns to be set.")
+            sys.exit(1)
+
         if args.trufflehog_patterns:
-            patterns = load_trufflehog_patterns(args.trufflehog_patterns)
-            print(f"✅ Patterns loaded (TruffleHog): {len(patterns)}\n")
+            if not Path(args.trufflehog_patterns).exists():
+                print(f"\u274c  TruffleHog patterns file '{args.trufflehog_patterns}' not found.")
+                sys.exit(1)
+            include_kw = [k.strip() for k in args.trufflehog_keywords.split(',')] if args.trufflehog_keywords else None
+            exclude_kw = [k.strip() for k in args.trufflehog_exclude_keywords.split(',')] if args.trufflehog_exclude_keywords else None
+            patterns, th_stats = load_trufflehog_patterns(args.trufflehog_patterns, include_keywords=include_kw, exclude_keywords=exclude_kw)
+            print(f"\u2705 TruffleHog patterns file: {args.trufflehog_patterns}")
+            print(f"   Total detectors in file : {th_stats['total']}")
+            if include_kw:
+                print(f"   Skipped (not in -tk)    : {th_stats['skipped_include']}")
+            if exclude_kw:
+                print(f"   Skipped (matched -tek)  : {th_stats['skipped_exclude']}")
+            print(f"   Active detectors        : {th_stats['loaded']}")
+            print()
         else:
             patterns = load_secret_patterns(args.patterns)
-            print(f"✅ Patterns loaded: {len(patterns)}\n")
+            print(f"\u2705 Patterns loaded ('{args.patterns}'): {len(patterns)}\n")
         
         all_findings = []
         total_issues_scanned = 0
@@ -1093,14 +1168,28 @@ def main():
                     max_attachment_size=max_attachment_size,
                 )
                 if findings:
+                    if args.no_duplicates:
+                        # Build seen set from already collected findings
+                        seen = {(f['issue_key'], f['secret_value']) for f in all_findings}
+                        before = len(findings)
+                        deduped_findings = []
+                        for f in findings:
+                            key = (f['issue_key'], f['secret_value'])
+                            if key not in seen:
+                                seen.add(key)  # also dedup within current issue batch
+                                deduped_findings.append(f)
+                        deduped = before - len(deduped_findings)
+                        findings = deduped_findings
+                        if deduped and not args.quiet:
+                            print(f"   🔁  Deduplicated {deduped} duplicate(s) in {issue.get('key')}")
                     all_findings.extend(findings)
-                    if not args.quiet:
+                    if findings and not args.quiet:
                         print(f"   ⚠️  Secrets found in {issue.get('key')}: {len(findings)}")
             
             print()
         
         # Generate report
-        print(f"\n📊 Total secrets found: {len(all_findings)}\n")
+        print(f"\n📊 Total secrets found: {len(all_findings)}" + (" (duplicates removed)" if args.no_duplicates else "") + "\n")
         
         # Stats for email
         scan_stats = {
