@@ -50,7 +50,7 @@ docker run --rm \
   -v $(pwd)/.env:/app/.env:ro \
   -v $(pwd)/trufflehog.yaml:/app/trufflehog.yaml:ro \
   jira-secret-scanner \
-  --trufflehog-patterns trufflehog.yaml \
+  --trufflehog-patterns /app/trufflehog.yaml \
   --env --scan-secrets --output /reports/report.xlsx
 ```
 
