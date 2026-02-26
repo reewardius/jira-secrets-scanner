@@ -422,12 +422,6 @@
   - Aviationstack
   regex:
     Aviationstack: (?:aviationstack).{0,40}\b([a-z0-9]{32})\b
-- name: Aws - 1
-  keywords:
-  - Aws
-  - '1'
-  regex:
-    Aws - 1: \b((?:AKIA|ABIA|ACCA|ASIA)[0-9A-Z]{16})\b
 - name: Axonaut
   keywords:
   - Axonaut
