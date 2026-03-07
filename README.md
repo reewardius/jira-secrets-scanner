@@ -39,7 +39,17 @@ docker run --rm \
   -v $(pwd)/reports:/reports \
   -v $(pwd)/.env:/app/.env:ro \
   jira-secret-scanner \
-  --env --scan-secrets --output /reports/report.xlsx
+  --env --scan-secrets --output /reports/jira_secrets.xlsx
+```
+
+### Scan all projects (JSON output format)
+
+```bash
+docker run --rm \
+  -v $(pwd)/reports:/reports \
+  -v $(pwd)/.env:/app/.env:ro \
+  jira-secret-scanner \
+  --env --scan-secrets --json --output /reports/jira_secrets.json
 ```
 
 ### Scan all projects with trufflehog patterns (1600+ patterns)
@@ -51,7 +61,7 @@ docker run --rm \
   -v $(pwd)/trufflehog.yaml:/app/trufflehog.yaml:ro \
   jira-secret-scanner \
   --trufflehog-patterns /app/trufflehog.yaml \
-  --env --scan-secrets --output /reports/report.xlsx
+  --env --scan-secrets --output /reports/jira_secrets.xlsx
 ```
 
 ### Scan specific projects
@@ -63,7 +73,7 @@ docker run --rm \
   jira-secret-scanner \
   --env --scan-secrets \
   --projects PROJ1,PROJ2 \
-  --output /reports/report.xlsx
+  --output /reports/jira_secrets.xlsx
 ```
 
 ### Limit issues per project
@@ -75,7 +85,7 @@ docker run --rm \
   jira-secret-scanner \
   --env --scan-secrets \
   --max-issues 100 \
-  --output /reports/report.xlsx
+  --output /reports/jira_secrets.xlsx
 ```
 
 ### Scan attachments
@@ -89,7 +99,7 @@ docker run --rm \
   jira-secret-scanner \
   --env --scan-secrets \
   --scan-attachments \
-  --output /reports/report.xlsx
+  --output /reports/jira_secrets.xlsx
 ```
 
 To skip large files, set a size limit:
@@ -101,7 +111,7 @@ docker run --rm \
   jira-secret-scanner \
   --env --scan-secrets \
   --scan-attachments --max-attachment-size 5mb \
-  --output /reports/report.xlsx
+  --output /reports/jira_secrets.xlsx
 ```
 
 ### Send report by email
@@ -116,7 +126,7 @@ docker run --rm \
   -e AWS_SECRET_ACCESS_KEY=... \
   jira-secret-scanner \
   --env --scan-secrets \
-  --output /reports/report.xlsx \
+  --output /reports/jira_secrets.xlsx \
   --email-sender scanner@company.com \
   --email-recipient security@company.com \
   --aws-region eu-west-1
