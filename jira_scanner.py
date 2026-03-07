@@ -839,6 +839,31 @@ def create_secrets_report(findings, filename="jira_secrets_report.xlsx"):
     return filename
 
 
+def export_findings_to_json(findings: List[Dict], filename: str, scan_stats: Dict = None) -> str:
+    """
+    Export findings to a JSON file.
+
+    Args:
+        findings:   List of finding dicts.
+        filename:   Output file path (should end with .json).
+        scan_stats: Optional scan statistics to include in the output.
+
+    Returns:
+        The filename that was written.
+    """
+    output = {
+        "generated_at": datetime.now().isoformat(),
+        "scan_stats": scan_stats or {},
+        "total_findings": len(findings),
+        "findings": findings,
+    }
+
+    with open(filename, "w", encoding="utf-8") as f:
+        json.dump(output, f, indent=2, ensure_ascii=False, default=str)
+
+    return filename
+
+
 def send_email_report(report_filename, findings, scan_stats, email_config):
     """
     Send email report via AWS SES
@@ -991,13 +1016,18 @@ Examples:
 
   # Include aws and api detectors, but exclude gateway ones
   python jira_scanner.py --env --scan-secrets -tp detectors.yaml -tk aws,api -tek gateway,arn
+
+  # Export findings as both XLSX and JSON
+  python jira_scanner.py --env --scan-secrets --json -o jira_secrets
+  python jira_scanner.py --env --scan-secrets --json -o jira_secrets.json
         """
     )
     
     parser.add_argument('-e', '--email', type=str, help='Atlassian email')
     parser.add_argument('-t', '--token', type=str, help='Atlassian API token')
     parser.add_argument('-u', '--url', type=str, help='Jira instance URL')
-    parser.add_argument('-o', '--output', type=str, help='Output filename')
+    parser.add_argument('-o', '--output', type=str, help='Output filename (base name or full path; extensions handled automatically)')
+    parser.add_argument('--json', action='store_true', help='Export findings to JSON in addition to XLSX')
     parser.add_argument('--env', action='store_true', help='Load credentials from .env file')
     parser.add_argument('--env-file', type=str, default='.env', help='Path to .env file')
     parser.add_argument('--scan-secrets', action='store_true', help='Enable secret scanning')
@@ -1198,25 +1228,43 @@ def main():
         }
         
         report_filename = None
-        
+
         if all_findings:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            report_filename = args.output or f"jira_secrets_report_{timestamp}.xlsx"
-            
-            if not report_filename.endswith('.xlsx'):
-                report_filename += '.xlsx'
-            
-            print("📝 Generating report...")
-            create_secrets_report(all_findings, report_filename)
-            print(f"✅ Report saved: {report_filename}")
-            
+
+            # Determine base name (strip any extension the user may have supplied)
+            if args.output:
+                base_name = re.sub(r'\.(xlsx|json)$', '', args.output, flags=re.IGNORECASE)
+            else:
+                base_name = f"jira_secrets_report_{timestamp}"
+
+            xlsx_filename = base_name + ".xlsx"
+            json_filename = base_name + ".json"
+
+            print("📝 Generating XLSX report...")
+            create_secrets_report(all_findings, xlsx_filename)
+            print(f"✅ XLSX report saved: {xlsx_filename}")
+            report_filename = xlsx_filename  # used later for email
+
+            if args.json:
+                print("📝 Generating JSON report...")
+                export_findings_to_json(all_findings, json_filename, scan_stats)
+                print(f"✅ JSON report saved: {json_filename}")
+
             # Summary stats
             print(f"\n📈 Summary:")
             print(f"   Affected projects: {len(set(f['project_key'] for f in all_findings))}")
-            print(f"   Affected issues: {len(set(f['issue_key'] for f in all_findings))}")
-            print(f"   Secret types: {len(set(f['secret_type'] for f in all_findings))}")
+            print(f"   Affected issues:   {len(set(f['issue_key'] for f in all_findings))}")
+            print(f"   Secret types:      {len(set(f['secret_type'] for f in all_findings))}")
         else:
             print("✅ No secrets found.")
+            # Still write JSON if requested (empty findings list)
+            if args.json:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                base_name = re.sub(r'\.(xlsx|json)$', '', args.output, flags=re.IGNORECASE) if args.output else f"jira_secrets_report_{timestamp}"
+                json_filename = base_name + ".json"
+                export_findings_to_json([], json_filename, scan_stats)
+                print(f"✅ JSON report saved: {json_filename}")
         
         # Send email if sender and recipient are configured
         if args.email_sender and args.email_recipient:
