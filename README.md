@@ -1,4 +1,4 @@
-# 🐳 Jira Secret Scanner
+# 🐳 Jira Secrets Scanner
 
 Scans Jira issues for exposed secrets — API keys, tokens, passwords, and credentials. Detects 40+ secret types across all or selected projects and exports findings to a `.xlsx` report.
 
