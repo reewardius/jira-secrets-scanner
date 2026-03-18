@@ -1,6 +1,6 @@
 # 🐳 Jira Secrets Scanner
 
-Scans Jira issues for exposed secrets - API keys, tokens, passwords, and credentials. Detects 50+ secret types out of the box, with optional TruffleHog patterns to expand coverage to 1500+. Exports findings across all or selected projects to a `.xlsx` report.
+Scans Jira issues for exposed secrets - API keys, tokens, passwords, and credentials. Detects 50+ secret types out of the box, with optional TruffleHog patterns to expand coverage to 1500+. Exports findings across all or selected projects to `.xlsx` report.
 
 ---
 
