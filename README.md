@@ -28,10 +28,6 @@ JIRA_URL=https://yourcompany.atlassian.net
 
 ## 3. Run
 
-All commands mount two volumes:
-- `./reports` — output directory where the `.xlsx` report is saved
-- `./.env` — credentials file (read-only)
-
 ### Scan all projects
 
 ```bash
