@@ -150,6 +150,56 @@ docker run --rm \
   --output /reports/jira_secrets
 ```
 
+### Filter by date
+
+Three flags control which issues are included based on their dates. They can be used independently or combined.
+
+**Scan issues updated in the last N days** — useful for a weekly cron job:
+
+```bash
+docker run --rm \
+  -v $(pwd)/reports:/reports \
+  -v $(pwd)/.env:/app/.env:ro \
+  jira-secret-scanner \
+  --env --scan-secrets \
+  --since-days 7 \
+  --output /reports/jira_secrets
+```
+
+**Scan issues updated on or after a specific date:**
+
+```bash
+docker run --rm \
+  -v $(pwd)/reports:/reports \
+  -v $(pwd)/.env:/app/.env:ro \
+  jira-secret-scanner \
+  --env --scan-secrets \
+  --since-date 2026-01-01 \
+  --output /reports/jira_secrets
+```
+
+**Scan issues created on or after a specific date:**
+
+```bash
+docker run --rm \
+  -v $(pwd)/reports:/reports \
+  -v $(pwd)/.env:/app/.env:ro \
+  jira-secret-scanner \
+  --env --scan-secrets \
+  --created-after 2026-01-01 \
+  --output /reports/jira_secrets
+```
+
+**Combine filters** — for example, issues created in 2026 that were also touched in the last week:
+
+```bash
+  --created-after 2026-01-01 --since-days 7
+```
+
+> If `--incremental` is used together with `--since-days` or `--since-date`, the incremental state date takes priority for each project.
+
+---
+
 ### Scan attachments
 
 By default, only text fields are scanned. To also scan attached files, add `--scan-attachments`:
@@ -248,7 +298,7 @@ XLSX is always generated when secrets are found. Use flags to add extra formats:
 
 ### HTML report
 
-Features:
+The HTML report is a self-contained single file — no dependencies, works offline. Features:
 
 - **Search** across all columns in real time
 - **Filter** by project and secret type
@@ -279,6 +329,9 @@ Each row shows: project, issue key, URL, summary, author, creation date, locatio
 | `-tek`, `--trufflehog-exclude-keywords` | — | Exclude detectors matching these keywords |
 | `--incremental` | off | Only scan issues updated since last run |
 | `--state-file` | `.jira_scanner_state.json` | Path to incremental scan state file |
+| `--since-days` | — | Only scan issues updated in the last N days |
+| `--since-date` | — | Only scan issues updated on or after this date (`YYYY-MM-DD`) |
+| `--created-after` | — | Only scan issues created on or after this date (`YYYY-MM-DD`) |
 | `--ignore-file` | — | Path to false-positive whitelist file |
 | `--workers` | 1 | Parallel threads for scanning (recommended: 5–20) |
 | `--scan-attachments` | off | Download and scan file attachments |
