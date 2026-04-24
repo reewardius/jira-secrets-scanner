@@ -1458,16 +1458,19 @@ def main():
                 max_attachment_size=max_attachment_size,
             )
 
+        # Only show tqdm bar when running in a real TTY (not Docker/pipe)
+        use_tqdm = TQDM_AVAILABLE and not args.quiet and sys.stderr.isatty()
+
         if args.workers > 1:
             # Parallel path (#4)
-            if TQDM_AVAILABLE and not args.quiet:
-                issue_iter = tqdm(issues, desc=f"  {project_key}", unit="issue", leave=False)
-            else:
-                issue_iter = issues
-
             with ThreadPoolExecutor(max_workers=args.workers) as executor:
                 future_map = {executor.submit(_scan_one, issue): issue for issue in issues}
-                for future in as_completed(future_map):
+                if use_tqdm:
+                    futures_iter = tqdm(as_completed(future_map), total=len(future_map),
+                                        desc=f"  {project_key}", unit="issue", leave=False)
+                else:
+                    futures_iter = as_completed(future_map)
+                for future in futures_iter:
                     if _interrupted:
                         executor.shutdown(wait=False, cancel_futures=True)
                         break
@@ -1476,10 +1479,10 @@ def main():
                         project_findings.extend(findings)
                     except Exception as exc:
                         issue_key = future_map[future].get('key', '?')
-                        print(f"   ⚠️  Error scanning {issue_key}: {exc}")
+                        tqdm.write(f"   ⚠️  Error scanning {issue_key}: {exc}") if use_tqdm else print(f"   ⚠️  Error scanning {issue_key}: {exc}")
         else:
             # Sequential path with optional tqdm (#15)
-            if TQDM_AVAILABLE and not args.quiet:
+            if use_tqdm:
                 issue_iter = tqdm(issues, desc=f"  {project_key}", unit="issue", leave=False)
             else:
                 issue_iter = issues
@@ -1494,8 +1497,11 @@ def main():
         before_ignore = len(project_findings)
         project_findings = [f for f in project_findings if not is_ignored(f, ignore_set)]
         ignored_count = before_ignore - len(project_findings)
+        def _log(msg):
+            tqdm.write(msg) if use_tqdm else print(msg)
+
         if ignored_count and not args.quiet:
-            print(f"   🚫 Ignored (whitelist): {ignored_count}")
+            _log(f"   🚫 Ignored (whitelist): {ignored_count}")
 
         # ── Deduplication ──
         if args.no_duplicates:
@@ -1508,11 +1514,11 @@ def main():
                     deduped.append(f)
             removed = len(project_findings) - len(deduped)
             if removed and not args.quiet:
-                print(f"   🔁 Deduplicated: {removed}")
+                _log(f"   🔁 Deduplicated: {removed}")
             project_findings = deduped
 
         if project_findings and not args.quiet:
-            print(f"   ⚠️  Secrets found: {len(project_findings)}")
+            _log(f"   ⚠️  Secrets found: {len(project_findings)}")
 
         all_findings.extend(project_findings)
         _partial_findings = all_findings  # keep global ref for Ctrl+C handler (#3)
