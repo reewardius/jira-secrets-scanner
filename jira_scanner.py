@@ -484,15 +484,16 @@ def get_jira_projects(email, api_token, jira_url):
 
 
 def get_project_issues(email, api_token, jira_url, project_key,
-                       max_issues=0, verbose=False, since_date: Optional[str] = None):
+                       max_issues=0, verbose=False, since_date: Optional[str] = None,
+                       created_after: Optional[str] = None):
     """
     Fetch issues for a given project.
     Tries multiple API endpoints for compatibility.
     max_issues=0 means fetch all issues.
 
     Args:
-        since_date: ISO date string (e.g. '2024-01-15') — only fetch issues
-                    updated on or after this date (incremental scan, #17).
+        since_date:    ISO date string — only fetch issues updated on or after this date.
+        created_after: ISO date string — only fetch issues created on or after this date.
     """
     jira_url = normalize_jira_url(jira_url)
     auth = HTTPBasicAuth(email, api_token)
@@ -504,11 +505,20 @@ def get_project_issues(email, api_token, jira_url, project_key,
 
     if verbose:
         limit_text = "all" if unlimited else str(max_issues)
-        since_text = f", updated since {since_date}" if since_date else ""
-        print(f"   🔍 Fetching issues for project {project_key} (limit: {limit_text}{since_text})")
+        filters = []
+        if since_date:
+            filters.append(f"updated >= {since_date}")
+        if created_after:
+            filters.append(f"created >= {created_after}")
+        filter_text = (", " + ", ".join(filters)) if filters else ""
+        print(f"   🔍 Fetching issues for project {project_key} (limit: {limit_text}{filter_text})")
 
-    # Build date filter suffix for JQL
-    date_filter = f' AND updated >= "{since_date}"' if since_date else ''
+    # Build date filter clauses for JQL
+    date_filter = ""
+    if since_date:
+        date_filter += f' AND updated >= "{since_date}"'
+    if created_after:
+        date_filter += f' AND created >= "{created_after}"'
 
     # ── Method 1: Board API ──────────────────
     if verbose:
@@ -1234,6 +1244,14 @@ Examples:
     parser.add_argument('--state-file', type=str, default=_STATE_FILE,
                         help=f'Path to incremental scan state file (default: {_STATE_FILE})')
 
+    # Date filters
+    parser.add_argument('--since-days', type=int, default=None,
+                        help='Only scan issues updated in the last N days (e.g. --since-days 7)')
+    parser.add_argument('--since-date', type=str, default=None,
+                        help='Only scan issues updated on or after this date (YYYY-MM-DD, e.g. --since-date 2026-01-01)')
+    parser.add_argument('--created-after', type=str, default=None,
+                        help='Only scan issues created on or after this date (YYYY-MM-DD, e.g. --created-after 2026-01-01)')
+
     # Whitelist (#18)
     parser.add_argument('--ignore-file', type=str, default=None,
                         help='Path to ignore/whitelist file (format: ISSUE-KEY:SecretType:SecretValue, '
@@ -1371,6 +1389,25 @@ def main():
         else:
             print(f"🔄 Incremental mode — no previous state found, performing full scan")
 
+    # ── Date filter flags ──
+    # --since-days takes priority over --since-date if both provided
+    global_since_date = None
+    if args.since_days is not None:
+        from datetime import timedelta
+        global_since_date = (datetime.now() - timedelta(days=args.since_days)).strftime('%Y-%m-%d')
+        print(f"📅 Date filter: issues updated in the last {args.since_days} day(s) (since {global_since_date})")
+    elif args.since_date is not None:
+        global_since_date = args.since_date
+        print(f"📅 Date filter: issues updated on or after {global_since_date}")
+
+    global_created_after = None
+    if args.created_after is not None:
+        global_created_after = args.created_after
+        print(f"📅 Date filter: issues created on or after {global_created_after}")
+
+    if global_since_date or global_created_after:
+        print()
+
     # ── Workers info ──
     if args.workers > 1:
         print(f"⚡ Parallel scanning enabled: {args.workers} workers\n")
@@ -1387,16 +1424,21 @@ def main():
         project_name = project.get('name', 'Unknown')
         print(f"📊 Scanning project: {project_key} — {project_name}")
 
-        # Determine date filter for incremental mode (#17)
-        since_date = None
+        # Determine updated-since filter: incremental state takes priority,
+        # then --since-days / --since-date
+        since_date = global_since_date
         if args.incremental and project_key in scan_state:
-            since_date = scan_state[project_key].get('last_scan')
-            if since_date:
+            incremental_date = scan_state[project_key].get('last_scan')
+            if incremental_date:
+                since_date = incremental_date
                 print(f"   ⏩ Incremental: only issues updated since {since_date}")
+
+        created_after = global_created_after
 
         issues = get_project_issues(
             email, api_token, jira_url, project_key,
-            args.max_issues, args.verbose, since_date=since_date
+            args.max_issues, args.verbose,
+            since_date=since_date, created_after=created_after
         )
         print(f"   Issues fetched: {len(issues)}")
         total_issues_scanned += len(issues)
