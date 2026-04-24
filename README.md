@@ -1,6 +1,6 @@
 # 🐳 Jira Secrets Scanner
 
-Scans Jira issues for exposed secrets - API keys, tokens, passwords, and credentials. Detects 50+ secret types out of the box, with optional TruffleHog patterns to expand coverage to 1500+. Exports findings across all or selected projects to `.xlsx` report.
+Scans Jira issues for exposed secrets — API keys, tokens, passwords, and credentials. Detects 50+ secret types out of the box, with optional TruffleHog patterns to expand coverage to 1500+. Exports findings to `.xlsx`, `.json`, and interactive `.html` reports.
 
 ---
 
@@ -28,27 +28,29 @@ JIRA_URL=https://yourcompany.atlassian.net
 
 ## 3. Run
 
-### Scan all projects
+### Scan all projects (XLSX output)
 
 ```bash
 docker run --rm \
   -v $(pwd)/reports:/reports \
   -v $(pwd)/.env:/app/.env:ro \
   jira-secret-scanner \
-  --env --scan-secrets --output /reports/jira_secrets.xlsx
+  --env --scan-secrets --output /reports/jira_secrets
 ```
 
-### Scan all projects (JSON output format)
+### Also generate an interactive HTML report
 
 ```bash
 docker run --rm \
   -v $(pwd)/reports:/reports \
   -v $(pwd)/.env:/app/.env:ro \
   jira-secret-scanner \
-  --env --scan-secrets --json --output /reports/jira_secrets.json
+  --env --scan-secrets --html --output /reports/jira_secrets
 ```
 
-### Scan all projects with trufflehog patterns (1600+ patterns)
+Produces `jira_secrets.xlsx` and `jira_secrets.html`. Add `--json` to also get `jira_secrets.json`.
+
+### Scan with TruffleHog patterns (1600+ patterns)
 
 ```bash
 docker run --rm \
@@ -56,8 +58,19 @@ docker run --rm \
   -v $(pwd)/.env:/app/.env:ro \
   -v $(pwd)/trufflehog.yaml:/app/trufflehog.yaml:ro \
   jira-secret-scanner \
+  --env --scan-secrets \
   --trufflehog-patterns /app/trufflehog.yaml \
-  --env --scan-secrets --output /reports/jira_secrets.xlsx
+  --output /reports/jira_secrets
+```
+
+Filter detectors by keyword:
+
+```bash
+# Include only AWS-related detectors
+--trufflehog-patterns /app/trufflehog.yaml -tk aws
+
+# Include aws and api, exclude gateway
+--trufflehog-patterns /app/trufflehog.yaml -tk aws,api -tek gateway,arn
 ```
 
 ### Scan specific projects
@@ -69,7 +82,7 @@ docker run --rm \
   jira-secret-scanner \
   --env --scan-secrets \
   --projects PROJ1,PROJ2 \
-  --output /reports/jira_secrets.xlsx
+  --output /reports/jira_secrets
 ```
 
 ### Limit issues per project
@@ -81,7 +94,60 @@ docker run --rm \
   jira-secret-scanner \
   --env --scan-secrets \
   --max-issues 100 \
-  --output /reports/jira_secrets.xlsx
+  --output /reports/jira_secrets
+```
+
+### Incremental scan (only new/updated issues)
+
+On the first run a state file is created. Subsequent runs only scan issues updated since the last run — much faster for large Jira instances.
+
+```bash
+docker run --rm \
+  -v $(pwd)/reports:/reports \
+  -v $(pwd)/.env:/app/.env:ro \
+  -v $(pwd)/.state:/app/.state \
+  jira-secret-scanner \
+  --env --scan-secrets \
+  --incremental \
+  --state-file /app/.state/scan_state.json \
+  --output /reports/jira_secrets
+```
+
+### Parallel scanning (faster for large instances)
+
+```bash
+docker run --rm \
+  -v $(pwd)/reports:/reports \
+  -v $(pwd)/.env:/app/.env:ro \
+  jira-secret-scanner \
+  --env --scan-secrets \
+  --workers 20 \
+  --output /reports/jira_secrets
+```
+
+Recommended range: 5–20 workers. Default is 1 (sequential).
+
+### Skip known false positives
+
+Create a `.jira_scanner_ignore` file (auto-loaded if present) or pass a custom path with `--ignore-file`:
+
+```
+# Format: ISSUE-KEY:SecretType:SecretValue
+# Use * as wildcard to ignore a value across all issues
+
+PROJ-123:AWS Access Key ID:AKIAIOSFODNN7EXAMPLE
+*:GitHub Personal Access Token:ghp_testtoken12345678901234567890
+```
+
+```bash
+docker run --rm \
+  -v $(pwd)/reports:/reports \
+  -v $(pwd)/.env:/app/.env:ro \
+  -v $(pwd)/.jira_scanner_ignore:/app/.jira_scanner_ignore:ro \
+  jira-secret-scanner \
+  --env --scan-secrets \
+  --ignore-file /app/.jira_scanner_ignore \
+  --output /reports/jira_secrets
 ```
 
 ### Scan attachments
@@ -95,24 +161,20 @@ docker run --rm \
   jira-secret-scanner \
   --env --scan-secrets \
   --scan-attachments \
-  --output /reports/jira_secrets.xlsx
+  --output /reports/jira_secrets
 ```
 
 To skip large files, set a size limit:
 
 ```bash
-docker run --rm \
-  -v $(pwd)/reports:/reports \
-  -v $(pwd)/.env:/app/.env:ro \
-  jira-secret-scanner \
-  --env --scan-secrets \
-  --scan-attachments --max-attachment-size 5mb \
-  --output /reports/jira_secrets.xlsx
+  --scan-attachments --max-attachment-size 5mb
 ```
 
 ### Send report by email
 
-Requires [AWS SES](https://aws.amazon.com/ses/) with a verified sender address.
+Requires [AWS SES](https://aws.amazon.com/ses/) with a verified sender address. Multiple recipients are supported — separate addresses with commas.
+
+Default region is `eu-central-1`. Override with `--aws-region` if needed.
 
 ```bash
 docker run --rm \
@@ -122,10 +184,10 @@ docker run --rm \
   -e AWS_SECRET_ACCESS_KEY=... \
   jira-secret-scanner \
   --env --scan-secrets \
-  --output /reports/jira_secrets.xlsx \
+  --output /reports/jira_secrets \
   --email-sender scanner@company.com \
-  --email-recipient security@company.com \
-  --aws-region eu-west-1
+  --email-recipient "security@company.com,ciso@company.com" \
+  --aws-region eu-central-1
 ```
 
 ---
@@ -134,19 +196,15 @@ docker run --rm \
 
 ### By default (`--scan-secrets`)
 
-The scanner reads the following text fields from every issue:
-
 | Field | Description |
 |---|---|
 | **Summary** | Issue title |
 | **Description** | Issue body (plain text and Atlassian Document Format) |
 | **Comments** | All comments on the issue |
 
-No files are downloaded. Fast and sufficient for secrets pasted directly into Jira.
-
 ### With `--scan-attachments`
 
-Each attachment is downloaded and its text is extracted before scanning. Supported file types:
+Each attachment is downloaded and its text is extracted before scanning.
 
 **Text & code** — decoded directly, no extra dependencies:
 
@@ -161,7 +219,7 @@ Each attachment is downloaded and its text is extracted before scanning. Support
 
 **Documents:**
 
-| Format | Extensions | Method |
+| Format | Extension | Method |
 |---|---|---|
 | Word | `docx` | python-docx |
 | PDF | `pdf` | PyMuPDF |
@@ -178,6 +236,59 @@ Files with any other extension are silently skipped.
 
 ---
 
-## Report
+## Reports
 
-The `.xlsx` report is saved to `./reports/` on the host. Each row shows the project, issue, secret type, matched value, and context. When a secret is found inside an attachment, the **Location** column shows `Attachment: filename.ext`.
+XLSX is always generated when secrets are found. Use flags to add extra formats:
+
+| Flag | Output |
+|---|---|
+| *(default)* | `<name>.xlsx` |
+| `--html` | `<name>.html` — interactive, filterable, secrets hidden by default |
+| `--json` | `<name>.json` — machine-readable, includes scan stats |
+
+### HTML report
+
+Features:
+
+- **Search** across all columns in real time
+- **Filter** by project and secret type
+- **Sort** by any column
+- **Secrets and context are hidden by default** — click a row's value cell to reveal both the token and its surrounding context simultaneously. Click again to hide.
+
+### XLSX report
+
+Each row shows: project, issue key, URL, summary, author, creation date, location, secret type, matched value, and context. When a secret is found inside an attachment, the **Location** column shows `Attachment: filename.ext`. The second sheet contains summary statistics.
+
+---
+
+## All flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `-e`, `--email` | — | Atlassian email |
+| `-t`, `--token` | — | Atlassian API token |
+| `-u`, `--url` | — | Jira instance URL |
+| `--env` | off | Load credentials from `.env` file |
+| `--env-file` | `.env` | Path to `.env` file |
+| `--scan-secrets` | off | Enable secret scanning |
+| `--projects` | all | Comma-separated project keys to scan |
+| `--max-issues` | 0 (unlimited) | Max issues per project |
+| `--patterns` | `secret_patterns.txt` | Custom patterns file (`Name:::Regex:::GroupIndex`) |
+| `-tp`, `--trufflehog-patterns` | — | TruffleHog v3 YAML detectors file |
+| `-tk`, `--trufflehog-keywords` | — | Include only detectors matching these keywords |
+| `-tek`, `--trufflehog-exclude-keywords` | — | Exclude detectors matching these keywords |
+| `--incremental` | off | Only scan issues updated since last run |
+| `--state-file` | `.jira_scanner_state.json` | Path to incremental scan state file |
+| `--ignore-file` | — | Path to false-positive whitelist file |
+| `--workers` | 1 | Parallel threads for scanning (recommended: 5–20) |
+| `--scan-attachments` | off | Download and scan file attachments |
+| `--max-attachment-size` | unlimited | Max attachment size, e.g. `2mb`, `500kb` |
+| `-o`, `--output` | auto timestamp | Output filename base (extensions added automatically) |
+| `--html` | off | Generate interactive HTML report |
+| `--json` | off | Generate JSON report |
+| `--no-duplicates`, `-nd` | off | Deduplicate findings by `(issue_key, secret_value)` |
+| `--email-sender` | — | SES sender address (must be verified) |
+| `--email-recipient` | — | Recipient address(es), comma-separated |
+| `--aws-region` | `eu-central-1` | AWS region for SES |
+| `-q`, `--quiet` | off | Suppress per-issue output |
+| `-v`, `--verbose` | off | Verbose debug output |
