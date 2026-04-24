@@ -6,3 +6,4 @@ pytesseract
 pymupdf
 python-docx
 pyyaml
+tqdm
