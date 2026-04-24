@@ -242,6 +242,54 @@ docker run --rm \
 
 ---
 
+### Notify issue authors personally
+
+When `--notify-authors` is set, each Jira issue author receives a **personal email** with only their own findings attached as a separate XLSX file. This is in addition to the general report sent to `--email-recipient`.
+
+```bash
+docker run --rm \
+  -v $(pwd)/reports:/reports \
+  -v $(pwd)/.env:/app/.env:ro \
+  -e AWS_ACCESS_KEY_ID=AKIA... \
+  -e AWS_SECRET_ACCESS_KEY=... \
+  jira-secret-scanner \
+  --env --scan-secrets \
+  --output /reports/jira_secrets \
+  --email-sender appsec@company.com \
+  --email-recipient security@company.com \
+  --notify-authors \
+  --notify-domain fozzy.ua,temabit.com
+```
+
+Use `--notify-domain` to restrict delivery to specific corporate domains. Authors with addresses outside the allowed domains (e.g. `@gmail.com`) are silently skipped. If `--notify-domain` is omitted, notifications are sent to all author emails — use with caution.
+
+**Email the author receives:**
+
+```
+Subject: ⚠️ Security Alert: 3 exposed secrets found in your Jira issues
+
+Hi John Smith,
+
+Our automated security scanner has detected 3 exposed secrets in Jira issues
+you created or commented on:
+
+  CSD-142, CSD-198
+
+Please take the following actions immediately:
+  1. Revoke / rotate the exposed credentials
+  2. Review the attached report for details
+  3. Never store secrets in Jira — use a secrets manager (Vault, AWS Secrets Manager, etc.)
+
+The full list of findings is attached as an Excel file.
+
+If you believe this is a false positive, contact the security team.
+
+---
+This is an automated message from the Jira Secrets Scanner.
+```
+
+---
+
 ## What gets scanned?
 
 ### By default (`--scan-secrets`)
@@ -343,5 +391,7 @@ Each row shows: project, issue key, URL, summary, author, creation date, locatio
 | `--email-sender` | — | SES sender address (must be verified) |
 | `--email-recipient` | — | Recipient address(es), comma-separated |
 | `--aws-region` | `eu-central-1` | AWS region for SES |
+| `--notify-authors` | off | Send personal email to each issue author with their own findings |
+| `--notify-domain` | — | Only notify authors on these domains, e.g. `google.com,tesla.com` |
 | `-q`, `--quiet` | off | Suppress per-issue output |
 | `-v`, `--verbose` | off | Verbose debug output |
