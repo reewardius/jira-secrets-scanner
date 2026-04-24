@@ -18,10 +18,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy scanner
 COPY jira_scanner.py .
-
-# Copy optional pattern files if they exist (won't fail if missing)
-COPY secret_patterns.tx[t] ./secret_patterns.txt
-COPY trufflehog.yam[l] ./trufflehog.yaml
+COPY regex.txt secret_patterns.txt
+COPY trufflehog.yaml .
 
 # Output directory (mount from host)
 RUN mkdir /reports
